@@ -33,3 +33,7 @@ build/
 # Service account JSON (never check in raw)
 service-account*.json
 *-credentials.json
+
+# Generated test fixture binaries (regenerate via make-test-images.js)
+backend/test/fixtures/test-*.jpg
+backend/test/fixtures/test-*.png
