@@ -504,6 +504,345 @@ select {
   color: var(--charcoal-soft);
 }
 
+/* ---- Admin banner (CTA on Submit screen for Admin role) ---- */
+.admin-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 18px;
+  margin: 0 0 24px;
+  font: inherit;
+  background: var(--terracotta);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  min-height: var(--tap-min);
+  transition: background-color 120ms ease;
+}
+.admin-banner:hover:not(:disabled) {
+  background: var(--terracotta-dark);
+}
+.admin-banner strong {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.admin-banner span {
+  flex: 1;
+}
+.admin-banner__chevron {
+  font-size: 18px;
+  flex: none;
+}
+.admin-banner--empty {
+  background: rgba(45, 27, 14, 0.06);
+  color: var(--charcoal-soft);
+}
+.admin-banner--empty:hover {
+  background: rgba(45, 27, 14, 0.1);
+}
+
+/* ---- Toast (transient confirmation banner at the top of any screen) ---- */
+.toast {
+  background: var(--success);
+  color: white;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  font-weight: 500;
+  text-align: center;
+}
+
+/* ---- Review queue ---- */
+.queue-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.queue-item {
+  background: white;
+  border: 1px solid rgba(45, 27, 14, 0.1);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 80ms ease;
+}
+.queue-item:hover {
+  border-color: var(--terracotta);
+}
+.queue-item:active {
+  transform: scale(0.99);
+}
+.queue-item__title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.queue-item__meta {
+  color: var(--charcoal-soft);
+  font-size: 13px;
+}
+
+/* ---- Review detail (Pass 2 — faithful preview) ----
+   Mirrors the live Intranet's story modal: terracotta header with title
+   + date pill + close, white body with carousel + text + Key Highlights,
+   footer row with Approve / Reject. */
+
+.review-mobile-back {
+  margin-bottom: 12px;
+  display: inline-block;
+}
+
+.review-modal {
+  background: white;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(45, 27, 14, 0.12);
+  margin-bottom: 24px;
+}
+
+.review-header {
+  background: var(--terracotta);
+  color: white;
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 70px;
+}
+.review-header__title {
+  flex: 1;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  margin: 0;
+  color: white;
+}
+.review-header__date {
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--terracotta-dark);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.review-header__close {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  border: none;
+  color: white;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.review-header__close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.review-body {
+  padding: 28px 24px 24px;
+}
+
+/* Carousel — chevrons overlaid on the image, counter top-right,
+   pagination dots bottom-center. */
+.review-carousel {
+  position: relative;
+  margin: 0 auto 24px;
+  max-width: 560px;
+  background: var(--cream-light);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.review-carousel__image {
+  width: 100%;
+  height: auto;
+  max-height: 480px;
+  object-fit: contain;
+  display: block;
+  background: var(--cream-light);
+}
+.review-carousel__counter {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(45, 27, 14, 0.78);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.review-carousel__nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(45, 27, 14, 0.78);
+  color: white;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 0;
+}
+.review-carousel__nav:hover:not(:disabled) {
+  background: rgba(45, 27, 14, 0.92);
+}
+.review-carousel__nav:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.review-carousel__nav--prev { left: 12px; }
+.review-carousel__nav--next { right: 12px; }
+.review-carousel__dots {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  background: rgba(45, 27, 14, 0.78);
+  padding: 6px 10px;
+  border-radius: 999px;
+}
+.review-carousel__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.review-carousel__dot--active {
+  background: white;
+}
+
+.review-body__text {
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--charcoal);
+  margin: 0 0 20px;
+}
+.review-body__text p {
+  margin: 0 0 14px;
+}
+.review-body__text p:last-child {
+  margin-bottom: 0;
+}
+
+/* Key Highlights card — light-grey background with terracotta-dark
+   left border, exactly as the live Intranet renders it. */
+.review-highlights {
+  background: rgba(45, 27, 14, 0.05);
+  border-left: 4px solid var(--terracotta-dark);
+  border-radius: 6px;
+  padding: 14px 18px;
+  margin: 0 0 20px;
+}
+.review-highlights__heading {
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0 0 6px;
+  color: var(--charcoal);
+}
+.review-highlights__list {
+  margin: 0;
+  padding-left: 22px;
+  color: var(--charcoal);
+}
+.review-highlights__list li {
+  margin-bottom: 4px;
+  line-height: 1.5;
+}
+.review-highlights__list li:last-child {
+  margin-bottom: 0;
+}
+
+.review-meta-card {
+  border-top: 1px solid rgba(45, 27, 14, 0.08);
+  padding-top: 14px;
+  font-size: 13px;
+  color: var(--charcoal-soft);
+  display: grid;
+  gap: 4px;
+}
+.review-meta-card strong {
+  display: inline-block;
+  min-width: 96px;
+  color: var(--charcoal);
+  font-weight: 600;
+}
+
+/* Footer row holds Approve / Reject. Mirrors the live's Previous/Next
+   placement but with our actions; sits inside the modal card. */
+.review-footer {
+  background: var(--cream-light);
+  padding: 16px 24px 18px;
+  display: flex;
+  gap: 10px;
+  border-top: 1px solid rgba(45, 27, 14, 0.08);
+}
+.review-footer .btn {
+  flex: 1;
+  width: auto;
+}
+
+/* Reject form replaces the footer when admin taps Reject */
+.reject-form {
+  background: rgba(212, 164, 62, 0.08);
+  border-top: 1px solid var(--ochre);
+  padding: 18px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.reject-form__label {
+  font-weight: 500;
+  color: var(--charcoal);
+}
+.reject-form__textarea {
+  font: inherit;
+  font-size: 16px;
+  padding: 12px 14px;
+  border: 1.5px solid rgba(45, 27, 14, 0.18);
+  border-radius: var(--radius);
+  background: white;
+  color: var(--charcoal);
+  resize: vertical;
+  min-height: 80px;
+}
+.reject-form__textarea:focus {
+  outline: 2px solid var(--terracotta);
+  outline-offset: 1px;
+  border-color: var(--terracotta);
+}
+.reject-form__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 /* ---- Pull-to-refresh indicator ---- */
 .pull-indicator {
   height: 0;

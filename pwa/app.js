@@ -74,12 +74,69 @@ const state = {
     items: null, // null = not yet loaded; [] = loaded but empty
     loadedAt: null,
   },
+  // Admin-only state slices (only populated when state.user.role === 'Admin')
+  adminQueue: {
+    loading: false,
+    error: null,
+    items: null, // null = not yet loaded
+    count: 0,
+  },
+  review: {
+    loading: false,
+    error: null,
+    errorCode: null, // for special handling of NOT_FOUND deep links
+    data: null,
+    destination: null,
+    rowNumber: null,
+    acting: false, // true while approve/reject in flight
+    rejecting: false, // true when the reject reason form is open
+  },
+  toast: null, // transient banner shown at the top of any screen
 };
+
+let toastTimer = null;
+function setToast(text) {
+  state.toast = text;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    state.toast = null;
+    render();
+  }, 3500);
+}
 
 /* ---- Render entry ---- */
 const root = document.getElementById('app');
 
+// Live badge polling — runs only while an Admin user is on the Submit screen.
+// Off in every other state (signed out, on review/queue/recent/submitting).
+const PENDING_POLL_MS = 30_000;
+let pendingPollTimer = null;
+
+function clearPendingPoll() {
+  if (pendingPollTimer) {
+    clearInterval(pendingPollTimer);
+    pendingPollTimer = null;
+  }
+}
+
+function ensurePendingPoll() {
+  if (pendingPollTimer) return;
+  pendingPollTimer = setInterval(() => {
+    if (state.user && state.user.role === 'Admin' && state.screen === 'submit') {
+      fetchPendingCount();
+    }
+  }, PENDING_POLL_MS);
+}
+
 function render() {
+  // Manage admin badge polling lifecycle from the single render() entry point
+  // so we don't have to plumb start/stop calls through every navigation handler.
+  if (state.user && state.user.role === 'Admin' && state.screen === 'submit') {
+    ensurePendingPoll();
+  } else {
+    clearPendingPoll();
+  }
+
   switch (state.screen) {
     case 'signin':
       renderSignIn();
@@ -93,9 +150,20 @@ function render() {
     case 'recent':
       renderRecent();
       break;
+    case 'queue':
+      renderQueue();
+      break;
+    case 'review':
+      renderReview();
+      break;
     default:
       root.innerHTML = '';
   }
+}
+
+// Toast banner — call from any screen's render to inject the current toast.
+function toastHtml() {
+  return state.toast ? `<div class="toast">${escapeHtml(state.toast)}</div>` : '';
 }
 
 /* ---- Screen: sign in ---- */
@@ -167,6 +235,7 @@ async function onSignInSubmit(e) {
     state.user = user;
     state.screen = 'submit';
     render();
+    if (user.role === 'Admin') fetchPendingCount();
   } catch (err) {
     state.signinError = 'Could not reach the server. Check your connection.';
     render();
@@ -186,11 +255,25 @@ function renderSubmit() {
     !overLimit &&
     form.files.length >= 1;
 
+  const isAdmin = u.role === 'Admin';
+  const queueCount = state.adminQueue.count;
+
   root.innerHTML = `
+    ${toastHtml()}
     <div class="topbar">
       <div class="topbar__greeting">Hi, ${escapeHtml(u.name || 'there')}</div>
       <button class="topbar__signout" type="button" id="signout-btn">Sign out</button>
     </div>
+
+    ${
+      isAdmin
+        ? `<button class="admin-banner${queueCount === 0 ? ' admin-banner--empty' : ''}" type="button" id="queue-btn">
+            <strong>${queueCount}</strong>
+            <span>${queueCount === 0 ? 'all stories reviewed' : queueCount === 1 ? 'story waiting your approval' : 'stories waiting your approval'}</span>
+            <span class="admin-banner__chevron">→</span>
+          </button>`
+        : ''
+    }
 
     <h1>Submit a story</h1>
     <p class="lead">Share what's happening so it can go on the Hub.</p>
@@ -307,6 +390,15 @@ function renderSubmit() {
       fetchRecentSubmissions();
     }
   });
+  if (isAdmin) {
+    document.getElementById('queue-btn').addEventListener('click', () => {
+      state.screen = 'queue';
+      render();
+      if (state.adminQueue.items === null && !state.adminQueue.loading) {
+        fetchPendingQueue();
+      }
+    });
+  }
 }
 
 function renderPhotoCards(files) {
@@ -428,6 +520,10 @@ function onSignOut() {
   state.form = { destination: 'General', text: '', title: '', highlight: '', files: [] };
   state.signinError = null;
   state.submitError = null;
+  state.recent = { loading: false, error: null, items: null, loadedAt: null };
+  state.adminQueue = { loading: false, error: null, items: null, count: 0 };
+  state.review = freshReviewState();
+  state.toast = null;
   state.screen = 'signin';
   render();
 }
@@ -700,6 +796,443 @@ document.addEventListener('touchend', () => {
   if (triggered && !state.recent.loading) fetchRecentSubmissions();
 });
 
+/* ---- Screen: review queue (Admin only) ---- */
+function renderQueue() {
+  const q = state.adminQueue;
+
+  let body;
+  if (q.loading && q.items === null) {
+    body = `
+      <div class="progress">
+        <div class="progress__spinner" aria-hidden="true"></div>
+        <div class="progress__step">Loading…</div>
+      </div>`;
+  } else if (q.error) {
+    body = `<div class="error">${escapeHtml(q.error)}</div>`;
+  } else if (!q.items || q.items.length === 0) {
+    body = `<p class="lead">No stories waiting approval right now.</p>`;
+  } else {
+    body = `<ul class="queue-list">${q.items.map(renderQueueItem).join('')}</ul>`;
+  }
+
+  root.innerHTML = `
+    ${toastHtml()}
+    <div class="topbar">
+      <button class="topbar__back" type="button" id="back-btn">← Back</button>
+      <button class="topbar__refresh" type="button" id="refresh-btn"${q.loading ? ' disabled' : ''}>
+        ${q.loading ? '↻ Refreshing…' : '↻ Refresh'}
+      </button>
+    </div>
+    <h1>Review queue</h1>
+    <p class="lead">Stories waiting your approval. Tap one to review.</p>
+    ${body}
+  `;
+
+  document.getElementById('back-btn').addEventListener('click', () => {
+    state.screen = 'submit';
+    render();
+  });
+  document.getElementById('refresh-btn').addEventListener('click', () => {
+    if (!q.loading) fetchPendingQueue();
+  });
+  const list = document.querySelector('.queue-list');
+  if (list) {
+    list.addEventListener('click', (e) => {
+      const li = e.target.closest('.queue-item');
+      if (!li) return;
+      const destination = li.dataset.destination;
+      const rowNumber = parseInt(li.dataset.row, 10);
+      openReview(destination, rowNumber);
+    });
+  }
+}
+
+function renderQueueItem(item) {
+  return `
+    <li class="queue-item" data-destination="${escapeAttr(item.destination)}" data-row="${item.row_number}">
+      <div class="queue-item__title">${escapeHtml(item.title || '(untitled)')}</div>
+      <div class="queue-item__meta">
+        ${escapeHtml(item.destination || '')} · ${escapeHtml(item.submitted_by || 'Unknown')} · ${escapeHtml(item.submitted_date || '')}
+      </div>
+    </li>
+  `;
+}
+
+/* ---- Screen: review detail (Admin only) ---- */
+/* Renders a faithful preview of the live Intranet's modal: terracotta
+   header with title + date pill + close button, white body with
+   carousel + text + Key Highlights card, footer row with Approve /
+   Reject. The runtime-only features of the live modal (reactions,
+   between-stories pagination) are intentionally omitted — they don't
+   apply to a single-story preview. */
+function renderReview() {
+  const r = state.review;
+
+  if (r.loading) {
+    root.innerHTML = `
+      ${toastHtml()}
+      <div class="topbar"><button class="topbar__back" type="button" id="back-btn">← Back</button></div>
+      <div class="progress">
+        <div class="progress__spinner" aria-hidden="true"></div>
+        <div class="progress__step">Loading submission…</div>
+      </div>`;
+    document.getElementById('back-btn').addEventListener('click', closeReview);
+    return;
+  }
+
+  if (r.errorCode === 'NOT_FOUND') {
+    root.innerHTML = `
+      ${toastHtml()}
+      <div class="topbar"><button class="topbar__back" type="button" id="back-btn">← Back</button></div>
+      <div class="error">
+        This submission is still being processed. Try again in a few minutes.
+      </div>`;
+    document.getElementById('back-btn').addEventListener('click', closeReview);
+    return;
+  }
+
+  if (r.error) {
+    root.innerHTML = `
+      ${toastHtml()}
+      <div class="topbar"><button class="topbar__back" type="button" id="back-btn">← Back</button></div>
+      <div class="error">${escapeHtml(r.error)}</div>`;
+    document.getElementById('back-btn').addEventListener('click', closeReview);
+    return;
+  }
+
+  if (!r.data) {
+    root.innerHTML = `<p class="lead">No data.</p>`;
+    return;
+  }
+
+  const d = r.data;
+  const images = reviewImages(d);
+  const idx = Math.max(0, Math.min(r.imageIndex, images.length - 1));
+  const datePill = formatDatePill(d.submitted_date);
+
+  const carouselHtml = images.length
+    ? `
+      <div class="review-carousel">
+        <img class="review-carousel__image" src="${escapeAttr(images[idx])}" alt="Story image ${idx + 1}" />
+        <span class="review-carousel__counter">${idx + 1} / ${images.length}</span>
+        ${images.length > 1
+          ? `
+            <button type="button" class="review-carousel__nav review-carousel__nav--prev"
+                    id="carousel-prev" aria-label="Previous image"${idx === 0 ? ' disabled' : ''}>‹</button>
+            <button type="button" class="review-carousel__nav review-carousel__nav--next"
+                    id="carousel-next" aria-label="Next image"${idx === images.length - 1 ? ' disabled' : ''}>›</button>
+            <div class="review-carousel__dots">
+              ${images.map((_, i) => `
+                <button type="button" class="review-carousel__dot${i === idx ? ' review-carousel__dot--active' : ''}"
+                        data-idx="${i}" aria-label="Go to image ${i + 1}"></button>
+              `).join('')}
+            </div>`
+          : ''}
+      </div>`
+    : '';
+
+  const highlightsHtml = d.highlight
+    ? `
+      <aside class="review-highlights">
+        <h3 class="review-highlights__heading">Key Highlights:</h3>
+        <ul class="review-highlights__list">
+          <li>${escapeHtml(d.highlight)}</li>
+        </ul>
+      </aside>`
+    : '';
+
+  const footerHtml = r.rejecting
+    ? `
+      <form class="reject-form" id="reject-form">
+        <label class="reject-form__label" for="reject-reason">
+          Why are you rejecting this? <span class="field__hint">(optional)</span>
+        </label>
+        <textarea
+          id="reject-reason"
+          class="reject-form__textarea"
+          placeholder="A short note saved alongside the rejection. Won't be shown to the submitter."
+          rows="3"
+        ></textarea>
+        <div class="reject-form__actions">
+          <button class="btn" type="submit" id="confirm-reject-btn"${r.acting ? ' disabled' : ''}>
+            ${r.acting ? 'Working…' : 'Confirm rejection'}
+          </button>
+          <button class="btn btn--secondary" type="button" id="cancel-reject-btn"${r.acting ? ' disabled' : ''}>
+            Cancel
+          </button>
+        </div>
+      </form>`
+    : `
+      <div class="review-footer">
+        <button class="btn btn--secondary" type="button" id="reject-btn"${r.acting ? ' disabled' : ''}>
+          Reject
+        </button>
+        <button class="btn" type="button" id="approve-btn"${r.acting ? ' disabled' : ''}>
+          ${r.acting ? 'Working…' : 'Approve'}
+        </button>
+      </div>`;
+
+  root.innerHTML = `
+    ${toastHtml()}
+    <button class="topbar__back review-mobile-back" type="button" id="back-btn">← Back</button>
+    <article class="review-modal">
+      <header class="review-header">
+        <h2 class="review-header__title">${escapeHtml(d.title || '(no title)')}</h2>
+        ${datePill ? `<span class="review-header__date">${escapeHtml(datePill)}</span>` : ''}
+        <button type="button" class="review-header__close" id="close-btn" aria-label="Close">✕</button>
+      </header>
+      <div class="review-body">
+        ${carouselHtml}
+        <div class="review-body__text">
+          ${renderReviewBody(d.text)}
+        </div>
+        ${highlightsHtml}
+        <div class="review-meta-card">
+          <div><strong>Submitted by</strong> ${escapeHtml(d.submitted_by || 'Unknown')}</div>
+          <div><strong>Destination</strong> ${escapeHtml(d.destination || '')}</div>
+        </div>
+      </div>
+      ${footerHtml}
+    </article>
+  `;
+
+  document.getElementById('back-btn').addEventListener('click', closeReview);
+  document.getElementById('close-btn').addEventListener('click', closeReview);
+  const approve = document.getElementById('approve-btn');
+  const reject = document.getElementById('reject-btn');
+  const rejectForm = document.getElementById('reject-form');
+  const cancelReject = document.getElementById('cancel-reject-btn');
+  if (approve) approve.addEventListener('click', onApprove);
+  if (reject) reject.addEventListener('click', onReject);
+  if (rejectForm) rejectForm.addEventListener('submit', onConfirmReject);
+  if (cancelReject) cancelReject.addEventListener('click', onCancelReject);
+
+  // Carousel navigation
+  const prev = document.getElementById('carousel-prev');
+  const next = document.getElementById('carousel-next');
+  if (prev) prev.addEventListener('click', () => moveCarousel(-1));
+  if (next) next.addEventListener('click', () => moveCarousel(1));
+  document.querySelectorAll('.review-carousel__dot').forEach((dot) => {
+    dot.addEventListener('click', (e) => {
+      const i = parseInt(e.currentTarget.dataset.idx, 10);
+      if (Number.isInteger(i)) {
+        state.review.imageIndex = i;
+        render();
+      }
+    });
+  });
+}
+
+function moveCarousel(delta) {
+  const images = reviewImages(state.review.data || {});
+  const next = state.review.imageIndex + delta;
+  if (next < 0 || next >= images.length) return;
+  state.review.imageIndex = next;
+  render();
+}
+
+function closeReview() {
+  state.review = freshReviewState();
+  state.screen = 'queue';
+  render();
+  if (state.adminQueue.items === null && !state.adminQueue.loading) {
+    fetchPendingQueue();
+  }
+}
+
+// Convert the body text into structured paragraphs for the preview. Splits
+// on blank lines (one or more newlines surrounded by optional whitespace)
+// and renders each paragraph as a <p>; any remaining single newlines
+// inside a paragraph become <br>. This makes the preview look like a
+// readable article rather than a single wall of text.
+function renderReviewBody(text) {
+  const paragraphs = String(text || '')
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (paragraphs.length === 0) return '<p><em>(empty)</em></p>';
+  return paragraphs
+    .map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+    .join('');
+}
+
+function freshReviewState() {
+  return {
+    loading: false,
+    error: null,
+    errorCode: null,
+    data: null,
+    destination: null,
+    rowNumber: null,
+    acting: false,
+    rejecting: false,
+    imageIndex: 0,
+  };
+}
+
+// Build the ordered list of images shown in the review carousel — banner
+// first, then body images. This matches what the admin actually sees on
+// the live Intranet card + modal.
+function reviewImages(d) {
+  const list = [];
+  if (d.banner_url) list.push(d.banner_url);
+  if (Array.isArray(d.body_urls)) list.push(...d.body_urls.filter(Boolean));
+  return list;
+}
+
+// Format a "Month D, YYYY" ContentDate as DD/MM/YYYY for the header pill.
+// Returns the original string if parsing fails.
+function formatDatePill(s) {
+  if (!s) return '';
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return String(s);
+  const dt = new Date(t);
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${dt.getFullYear()}`;
+}
+
+/* ---- Admin fetch + action functions ---- */
+async function fetchPendingCount() {
+  if (!state.user || state.user.role !== 'Admin') return;
+  try {
+    const url = `${API}/admin/pending?pin=${encodeURIComponent(state.user.pin)}`;
+    const resp = await fetch(url);
+    const data = await resp.json().catch(() => ({}));
+    if (resp.ok && data.ok) {
+      state.adminQueue.count = (data.submissions || []).length;
+      // If we already have items loaded, keep them in sync too
+      if (state.adminQueue.items !== null) state.adminQueue.items = data.submissions;
+      if (state.screen === 'submit') render();
+    }
+  } catch {
+    // Non-fatal; the badge stays at its last value
+  }
+}
+
+async function fetchPendingQueue() {
+  if (!state.user || state.user.role !== 'Admin') return;
+  state.adminQueue.loading = true;
+  state.adminQueue.error = null;
+  if (state.screen === 'queue') render();
+  try {
+    const url = `${API}/admin/pending?pin=${encodeURIComponent(state.user.pin)}`;
+    const resp = await fetch(url);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      state.adminQueue.error = errorMessageFor(data.error, resp.status);
+      state.adminQueue.items = state.adminQueue.items || [];
+    } else {
+      state.adminQueue.items = data.submissions || [];
+      state.adminQueue.count = state.adminQueue.items.length;
+    }
+  } catch {
+    state.adminQueue.error = 'Could not reach the server. Check your connection.';
+    state.adminQueue.items = state.adminQueue.items || [];
+  } finally {
+    state.adminQueue.loading = false;
+    if (state.screen === 'queue') render();
+  }
+}
+
+function openReview(destination, rowNumber) {
+  state.review = freshReviewState();
+  state.review.destination = destination;
+  state.review.rowNumber = rowNumber;
+  state.screen = 'review';
+  render();
+  fetchReviewData();
+}
+
+async function fetchReviewData() {
+  const r = state.review;
+  if (!state.user || !r.destination || !r.rowNumber) return;
+  r.loading = true;
+  r.error = null;
+  r.errorCode = null;
+  if (state.screen === 'review') render();
+  try {
+    const url = `${API}/admin/submission?pin=${encodeURIComponent(state.user.pin)}&destination=${encodeURIComponent(r.destination)}&row=${r.rowNumber}`;
+    const resp = await fetch(url);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      r.errorCode = data.error || 'UNKNOWN';
+      r.error = errorMessageFor(data.error, resp.status);
+    } else {
+      r.data = data.submission;
+    }
+  } catch {
+    r.error = 'Could not reach the server. Check your connection.';
+  } finally {
+    r.loading = false;
+    if (state.screen === 'review') render();
+  }
+}
+
+async function onApprove() {
+  await performReviewAction('/admin/approve', null, 'Story approved.');
+}
+
+function onReject() {
+  // Open the reason form. The actual reject hits the backend on confirm.
+  state.review.rejecting = true;
+  render();
+  // Focus the textarea for fast typing
+  const ta = document.getElementById('reject-reason');
+  if (ta) ta.focus();
+}
+
+function onCancelReject() {
+  state.review.rejecting = false;
+  render();
+}
+
+async function onConfirmReject(e) {
+  e.preventDefault();
+  const ta = document.getElementById('reject-reason');
+  const reason = ta ? ta.value.trim() : '';
+  state.review.rejecting = false;
+  await performReviewAction('/admin/reject', reason, 'Story rejected.');
+}
+
+async function performReviewAction(path, reason, successMessage) {
+  const r = state.review;
+  if (!state.user || !r.data || r.acting) return;
+  r.acting = true;
+  if (state.screen === 'review') render();
+  try {
+    const body = {
+      pin: state.user.pin,
+      destination: r.destination,
+      row_number: r.rowNumber,
+    };
+    if (reason !== null) body.reason = reason;
+    const resp = await fetch(API + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      r.acting = false;
+      r.error = errorMessageFor(data.error, resp.status);
+      if (state.screen === 'review') render();
+      return;
+    }
+    setToast(successMessage);
+    state.review = freshReviewState();
+    state.screen = 'queue';
+    state.adminQueue.items = null; // force re-fetch
+    state.adminQueue.count = Math.max(0, state.adminQueue.count - 1);
+    render();
+    fetchPendingQueue();
+  } catch {
+    r.acting = false;
+    r.error = 'Could not reach the server. Check your connection and try again.';
+    if (state.screen === 'review') render();
+  }
+}
+
 // ISO 8601 timestamp with the device's local timezone offset, to-the-second.
 // Date.prototype.toISOString() always emits UTC ("...Z"), which would make
 // a submission at 11pm NT time stamp as the next UTC day — wrong folder
@@ -736,9 +1269,30 @@ function escapeAttr(s) {
 /* ---- Boot ---- */
 function boot() {
   const u = loadUser();
+  state.user = u || null;
+
+  // Deep link from admin notification email: /?review={destination}&row={n}
+  // Honoured only if the user is signed in as Admin. After consuming, the
+  // query string is cleared so a refresh doesn't re-trigger it.
+  const params = new URLSearchParams(window.location.search);
+  const reviewDest = params.get('review');
+  const reviewRow = parseInt(params.get('row'), 10);
+
+  if (u && reviewDest && Number.isInteger(reviewRow) && u.role === 'Admin') {
+    state.review = freshReviewState();
+    state.review.destination = reviewDest;
+    state.review.rowNumber = reviewRow;
+    state.screen = 'review';
+    window.history.replaceState({}, '', window.location.pathname);
+    render();
+    fetchReviewData();
+    fetchPendingCount(); // populate badge for when admin returns to submit
+    return;
+  }
+
   if (u) {
-    state.user = u;
     state.screen = 'submit';
+    if (u.role === 'Admin') fetchPendingCount();
   } else {
     state.screen = 'signin';
   }

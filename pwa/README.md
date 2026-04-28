@@ -24,8 +24,16 @@ Phone-first Progressive Web App. Plain HTML + vanilla JS + CSS — no framework,
   - `submitted_at` includes the device's local timezone offset (e.g. `+09:30`) so submissions made late at night don't roll into the next UTC day
 - **Banner cropping is not done client-side** — the existing Intranet uses CSS `background-size: cover` with `background-position: center center`, so the browser handles cropping at display time. The picker shows a tip telling submitters to frame the subject near the centre.
 
-What's *not* in this item yet:
-- **Items 7-8:** Backend admin endpoints + PWA admin Pass 1 (review queue of submissions waiting approval, Review Detail, Approve/Reject).
+- **Admin Pass 1** (item 8 — visible only when `state.user.role === 'Admin'`):
+  - Pending count banner on the Submit screen — terracotta CTA "N stories waiting your approval", or a quiet greyed banner "all stories reviewed" at zero
+  - Review queue screen — list of pending stories sorted by submitted date desc
+  - Review Detail screen with banner image, title, highlight, body text, body images (General only), submitter + date metadata, Approve / Reject actions
+  - Deep link `?review={destination}&row={n}` opens the PWA directly to Review Detail (used by admin notification emails). If the row doesn't exist or isn't `Waiting Approval` yet, shows "still being processed" message
+  - Confirmation toast on action, returns to queue, count drops by one immediately
+- **Admin Pass 2** (item 11):
+  - Faithful preview rendering — banner becomes a hero card with destination tag and title overlaid via gradient, body text rendered as proper paragraphs (split on blank lines), submitter/date/destination grouped into a meta card
+  - Live badge polling — count refreshes every 30 seconds while the Admin user is on the Submit screen, idle elsewhere. Polling auto-starts/stops based on screen + role; managed from the single render() entry point
+  - Reject-reason input — Reject button reveals an in-place form with a textarea (optional), Confirm rejection / Cancel buttons. Reason is sent to backend and written to the AdminNote column when present
 
 ## File layout
 
