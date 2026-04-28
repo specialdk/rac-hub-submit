@@ -2,23 +2,32 @@
 
 Phone-first Progressive Web App. Plain HTML + vanilla JS + CSS — no framework, no TypeScript, no build pipeline.
 
-## What's here (item 4 — sign-in + submit wiring)
+## What's here (items 4–5)
 
 - **Sign-in screen** — PIN entry, calls `POST /auth`, persists `pin/name/email/role` to localStorage.
-- **Submit screen** — destination dropdown (General default), story text with live char counter (10–1000), optional title and highlight, basic photo picker (multiple, camera or library), photo previews labelled Banner / Photo 2 / Photo 3 in selection order. First photo is the banner.
-- **Submitting screen** — uploading spinner, success message, retry on failure.
+- **Submit screen** — destination dropdown (General default), story text with live char counter (10–1000), optional title and highlight, photo picker (multiple, camera or library), per-photo remove (✕) and reorder (◀ ▶) controls, banner-framing tip, photo previews labelled Banner / Photo 2 / Photo 3 in selection order. First photo is the banner.
+- **Submitting screen** — "Resizing photos…" then "Uploading your story…", success message, retry on failure.
 - **Sign-out** — clears localStorage and returns to sign-in.
+- **On-device photo processing** (item 5):
+  - Resize so longest edge ≤ 1920 px (no upscale)
+  - Apply EXIF orientation by rotating canvas pixels (phones lie about orientation in metadata; the Intranet doesn't read EXIF)
+  - Strip all EXIF metadata via canvas re-encode (drops GPS coords for privacy)
+  - Re-encode all images as JPEG at quality 0.85
+  - Hard cap of **10 photos per story** — picker disables at the cap with a clear note. Post-resize totals are tiny so the backend's 20 MB safety net rarely kicks in, but stays in place.
+  - Inline EXIF parser in `photo-utils.js`, no npm dependency
+  - `submitted_at` includes the device's local timezone offset (e.g. `+09:30`) so submissions made late at night don't roll into the next UTC day
+- **Banner cropping is not done client-side** — the existing Intranet uses CSS `background-size: cover` with `background-position: center center`, so the browser handles cropping at display time. The picker shows a tip telling submitters to frame the subject near the centre.
 
-What's *not* in this item yet — coming next:
-- **Item 5:** canvas-based resize, EXIF orientation rotation, EXIF stripping, drag/arrow reorder, per-photo remove, client-side 20 MB total cap.
+What's *not* in this item yet:
 - **Item 6:** "My Recent Submissions" screen.
 
 ## File layout
 
 ```
 pwa/
-├── index.html          App shell — loads config, app, registers SW
+├── index.html          App shell — loads config, photo-utils, app, registers SW
 ├── config.js           window.RAC_CONFIG.apiBase — backend URL per env
+├── photo-utils.js      Inline EXIF parser, canvas resize/rotate/strip-EXIF
 ├── app.js              Screen orchestration, state, API calls (vanilla)
 ├── styles.css          Cream/terracotta/ochre palette, Work Sans
 ├── manifest.json       PWA manifest (installable on phones)

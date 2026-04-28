@@ -15,6 +15,12 @@ const DESTINATIONS = [
 
 const TEXT_MIN = 10;
 const TEXT_MAX = 1000;
+// 10 total = banner + up to 9 body. The backend will accept up to 11
+// (banner + 10) as a safety net plus a 20 MB total-bytes cap, but the
+// PWA enforces a tighter, user-friendly count cap. Post-resize totals
+// are tiny (typically a few hundred KB per photo) so byte-count
+// gating client-side adds confusion without value.
+const MAX_PHOTOS = 10;
 
 /* ---- LocalStorage helpers ---- */
 const LS_PIN = 'rac_hub_pin';
@@ -51,7 +57,6 @@ function clearUser() {
 const state = {
   screen: 'signin',
   user: null,
-  // Submit form state — preserved across re-renders within this screen
   form: {
     destination: 'General',
     text: '',
@@ -61,7 +66,7 @@ const state = {
   },
   signinError: null,
   submitError: null,
-  submitProgress: null, // 'uploading' | 'done' | null
+  submitProgress: null, // 'resizing' | 'uploading' | 'done' | null
   lastFolderName: null,
 };
 
@@ -115,7 +120,7 @@ function renderSignIn() {
 
   const errBox = document.getElementById('signin-error');
   if (state.signinError) {
-    errBox.innerHTML = `<div class="error">${state.signinError}</div>`;
+    errBox.innerHTML = `<div class="error">${escapeHtml(state.signinError)}</div>`;
   }
 
   document.getElementById('signin-form').addEventListener('submit', onSignInSubmit);
@@ -167,7 +172,6 @@ function renderSubmit() {
   const overLimit = charCount > TEXT_MAX;
   const canSubmit =
     !!u &&
-    !!form.destination &&
     DESTINATIONS.includes(form.destination) &&
     charCount >= TEXT_MIN &&
     !overLimit &&
@@ -230,7 +234,7 @@ function renderSubmit() {
 
       <div class="field">
         <span class="field__label">Photos</span>
-        <label class="photo-picker" for="photos">
+        <label class="photo-picker${form.files.length >= MAX_PHOTOS ? ' photo-picker--disabled' : ''}" for="photos">
           <div class="photo-picker__icon">📷</div>
           <div><strong>Tap to add photos</strong></div>
           <span class="photo-picker__hint">First photo is the banner. Camera or library.</span>
@@ -240,8 +244,12 @@ function renderSubmit() {
             accept="image/*"
             capture="environment"
             multiple
+            ${form.files.length >= MAX_PHOTOS ? 'disabled' : ''}
           />
         </label>
+        <p class="photo-picker__tip">
+          Maximum ${MAX_PHOTOS} photos per story. For best banner display, frame the most important part of your first photo near the centre.
+        </p>
         <div class="photo-grid" id="photo-grid">
           ${renderPhotoCards(form.files)}
         </div>
@@ -276,24 +284,86 @@ function renderSubmit() {
     state.form.highlight = e.target.value;
   });
   document.getElementById('photos').addEventListener('change', onPhotosPicked);
+  document.getElementById('photo-grid').addEventListener('click', onPhotoControl);
   document.getElementById('submit-form').addEventListener('submit', onSubmit);
 }
 
 function renderPhotoCards(files) {
   if (!files.length) return '';
+  const last = files.length - 1;
   return files
     .map((f, i) => {
       const url = URL.createObjectURL(f);
       const label = i === 0 ? 'Banner' : `Photo ${i + 1}`;
-      const cls = i === 0 ? 'photo-card__label photo-card__label--banner' : 'photo-card__label';
+      const labelCls =
+        i === 0 ? 'photo-card__label photo-card__label--banner' : 'photo-card__label';
       return `
-        <div class="photo-card">
+        <div class="photo-card" data-idx="${i}">
           <img src="${url}" alt="${escapeAttr(label)}" />
-          <span class="${cls}">${label}</span>
+          <span class="${labelCls}">${label}</span>
+          <button
+            type="button"
+            class="photo-card__btn photo-card__btn--remove"
+            data-action="remove"
+            data-idx="${i}"
+            aria-label="Remove ${escapeAttr(label)}"
+          >✕</button>
+          <div class="photo-card__moves">
+            <button
+              type="button"
+              class="photo-card__btn photo-card__btn--move"
+              data-action="left"
+              data-idx="${i}"
+              aria-label="Move ${escapeAttr(label)} left"
+              ${i === 0 ? 'disabled' : ''}
+            >◀</button>
+            <button
+              type="button"
+              class="photo-card__btn photo-card__btn--move"
+              data-action="right"
+              data-idx="${i}"
+              aria-label="Move ${escapeAttr(label)} right"
+              ${i === last ? 'disabled' : ''}
+            >▶</button>
+          </div>
         </div>
       `;
     })
     .join('');
+}
+
+function onPhotoControl(e) {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const idx = parseInt(btn.dataset.idx, 10);
+  const action = btn.dataset.action;
+  const files = state.form.files;
+  if (Number.isNaN(idx) || idx < 0 || idx >= files.length) return;
+
+  if (action === 'remove') {
+    files.splice(idx, 1);
+  } else if (action === 'left' && idx > 0) {
+    [files[idx - 1], files[idx]] = [files[idx], files[idx - 1]];
+  } else if (action === 'right' && idx < files.length - 1) {
+    [files[idx], files[idx + 1]] = [files[idx + 1], files[idx]];
+  } else {
+    return;
+  }
+  document.getElementById('photo-grid').innerHTML = renderPhotoCards(files);
+  refreshPickerCap();
+  refreshSubmitDisabled();
+}
+
+// Toggle the picker between enabled and disabled states based on file
+// count. Called when files are added or removed without a full re-render
+// of the form (full re-renders would clobber textarea cursor state).
+function refreshPickerCap() {
+  const picker = document.querySelector('.photo-picker');
+  const input = document.getElementById('photos');
+  if (!picker || !input) return;
+  const atCap = state.form.files.length >= MAX_PHOTOS;
+  picker.classList.toggle('photo-picker--disabled', atCap);
+  input.disabled = atCap;
 }
 
 function refreshSubmitDisabled() {
@@ -307,7 +377,6 @@ function refreshSubmitDisabled() {
   const btn = document.getElementById('submit-btn');
   if (btn) btn.disabled = !canSubmit;
 
-  // Update char count colour live
   const count = document.querySelector('.field__count');
   if (count) {
     count.textContent =
@@ -318,16 +387,17 @@ function refreshSubmitDisabled() {
 }
 
 function onPhotosPicked(e) {
-  // Append newly-picked files to the current list. The picker fires once
-  // per `change`; selecting again *adds* to selection rather than replacing.
-  // Item 5 will layer in resize/EXIF; for now we pass File objects through.
+  // Append newly-picked files to the current list. Cap total at MAX_PHOTOS;
+  // anything past that is silently dropped (the picker will already prevent
+  // a single user pick from going wild — this guards against multiple picks).
   const picked = Array.from(e.target.files || []);
   if (!picked.length) return;
-  state.form.files = state.form.files.concat(picked);
-  // Reset input so picking the same filename twice still fires `change`
+  const room = Math.max(0, MAX_PHOTOS - state.form.files.length);
+  state.form.files = state.form.files.concat(picked.slice(0, room));
+  // Reset input so picking the same filename again still fires `change`
   e.target.value = '';
-  // Re-render just the grid + button state
   document.getElementById('photo-grid').innerHTML = renderPhotoCards(state.form.files);
+  refreshPickerCap();
   refreshSubmitDisabled();
 }
 
@@ -348,20 +418,38 @@ async function onSubmit(e) {
   if (f.text.length < TEXT_MIN || f.text.length > TEXT_MAX || f.files.length < 1) return;
 
   state.screen = 'submitting';
-  state.submitProgress = 'uploading';
+  state.submitProgress = 'resizing';
   state.submitError = null;
+  render();
+
+  // Resize, re-orient, and strip EXIF on the device. Run in parallel —
+  // for the typical 1-3 photo case this is fast; even with 11 photos it
+  // stays under a few seconds on a modern phone.
+  let processed;
+  try {
+    processed = await Promise.all(f.files.map((file) => RAC_PHOTOS.processImage(file)));
+  } catch (err) {
+    state.submitError =
+      'Could not process one of your photos. Try removing it or picking a different image.';
+    state.screen = 'submit';
+    render();
+    return;
+  }
+
+  state.submitProgress = 'uploading';
   render();
 
   const fd = new FormData();
   fd.append('pin', state.user.pin);
   fd.append('destination', f.destination);
   fd.append('text', f.text);
-  fd.append('submitted_at', new Date().toISOString());
+  fd.append('submitted_at', localISOString());
   if (f.title.trim()) fd.append('title_suggestion', f.title.trim());
   if (f.highlight.trim()) fd.append('highlight_suggestion', f.highlight.trim());
-  fd.append('banner', f.files[0]);
-  for (let i = 1; i < f.files.length && i <= 10; i++) {
-    fd.append(`body_${i}`, f.files[i]);
+  // Always send banner + body_N as JPEGs (canvas exports JPEG regardless of input)
+  fd.append('banner', processed[0], 'banner.jpg');
+  for (let i = 1; i < processed.length && i <= 10; i++) {
+    fd.append(`body_${i}`, processed[i], `body-${i}.jpg`);
   }
 
   try {
@@ -375,7 +463,6 @@ async function onSubmit(e) {
     }
     state.lastFolderName = data.folder_name;
     state.submitProgress = 'done';
-    // Reset form fields but keep user logged in
     state.form = { destination: 'General', text: '', title: '', highlight: '', files: [] };
     render();
   } catch (err) {
@@ -411,13 +498,16 @@ function renderSubmitting() {
     return;
   }
 
+  const message =
+    state.submitProgress === 'resizing' ? 'Resizing photos…' : 'Uploading your story…';
+
   root.innerHTML = `
     <div class="topbar">
       <div class="topbar__greeting">Hi, ${escapeHtml(u.name || 'there')}</div>
     </div>
     <div class="progress">
       <div class="progress__spinner" aria-hidden="true"></div>
-      <div class="progress__step">Uploading your story…</div>
+      <div class="progress__step">${message}</div>
     </div>
   `;
 }
@@ -452,6 +542,27 @@ function errorMessageFor(code, status) {
       if (status === 0 || status >= 500) return 'Server problem. Try again in a minute.';
       return code ? `Submit failed: ${code}` : 'Submit failed. Try again.';
   }
+}
+
+// ISO 8601 timestamp with the device's local timezone offset, to-the-second.
+// Date.prototype.toISOString() always emits UTC ("...Z"), which would make
+// a submission at 11pm NT time stamp as the next UTC day — wrong folder
+// date in Drive, wrong ContentDate in the sheet. The contract example
+// shape is `2026-04-27T14:32:11+09:30`.
+function localISOString(date = new Date()) {
+  const pad = (n, w = 2) => String(n).padStart(w, '0');
+  const y = date.getFullYear();
+  const mo = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const h = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  const s = pad(date.getSeconds());
+  // getTimezoneOffset returns minutes BEHIND UTC; flip the sign so + means ahead.
+  const off = -date.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const offH = pad(Math.floor(Math.abs(off) / 60));
+  const offM = pad(Math.abs(off) % 60);
+  return `${y}-${mo}-${d}T${h}:${mi}:${s}${sign}${offH}:${offM}`;
 }
 
 function escapeHtml(s) {

@@ -235,6 +235,13 @@ select {
   border-color: var(--terracotta);
   background: rgba(196, 101, 26, 0.04);
 }
+.photo-picker--disabled,
+.photo-picker--disabled:hover {
+  cursor: not-allowed;
+  opacity: 0.55;
+  border-color: rgba(45, 27, 14, 0.15);
+  background: rgba(45, 27, 14, 0.03);
+}
 .photo-picker__icon {
   font-size: 32px;
   color: var(--terracotta);
@@ -284,6 +291,60 @@ select {
 .photo-card__label--banner {
   background: var(--terracotta);
   color: white;
+}
+
+/* Per-photo controls — remove (top-right), move left/right (bottom) */
+.photo-card__btn {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  background: rgba(45, 27, 14, 0.78);
+  color: var(--cream);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  user-select: none;
+}
+.photo-card__btn:hover:not(:disabled) {
+  background: rgba(45, 27, 14, 0.92);
+}
+.photo-card__btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.photo-card__btn--remove {
+  top: 8px;
+  right: 8px;
+  background: rgba(184, 52, 30, 0.92);
+}
+.photo-card__btn--remove:hover:not(:disabled) {
+  background: var(--error);
+}
+.photo-card__moves {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+}
+.photo-card__moves .photo-card__btn {
+  position: static;
+}
+
+.photo-picker__tip {
+  margin: 8px 4px 0;
+  font-size: 13px;
+  color: var(--charcoal-soft);
+  font-style: italic;
+  line-height: 1.4;
 }
 
 /* ---- Status messages ---- */
