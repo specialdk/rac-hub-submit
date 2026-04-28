@@ -13,12 +13,19 @@ const app = express();
 // This makes req.ip reflect the real client IP so the rate limiter keys correctly.
 app.set('trust proxy', 1);
 
-// CORS: in dev, ALLOWED_ORIGIN may be unset — reflect the request origin.
-// In prod, set ALLOWED_ORIGIN to the PWA URL.
-const allowedOrigin = process.env.ALLOWED_ORIGIN;
+// CORS:
+// - Empty ALLOWED_ORIGIN (typical for local dev) → reflect the request origin
+// - Comma-separated values (e.g. "https://prod-pwa.up.railway.app,http://localhost:8081")
+//   → allow any of those exact origins. This lets the deployed backend
+//   serve both prod traffic and a local dev PWA pointed at it.
+const rawOrigin = process.env.ALLOWED_ORIGIN || '';
+const allowedOrigins = rawOrigin
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 app.use(
   cors({
-    origin: allowedOrigin && allowedOrigin.length > 0 ? allowedOrigin : true,
+    origin: allowedOrigins.length === 0 ? true : allowedOrigins,
     credentials: false,
   })
 );

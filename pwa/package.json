@@ -1,0 +1,15 @@
+{
+  "name": "rac-hub-submit-pwa",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static PWA for RAC Hub Submit. Plain HTML + vanilla JS + CSS.",
+  "type": "module",
+  "main": "serve.js",
+  "scripts": {
+    "start": "node serve.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {}
+}

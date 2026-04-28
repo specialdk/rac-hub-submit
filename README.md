@@ -27,7 +27,40 @@ See [`backend/README.md`](backend/README.md) and [`pwa/README.md`](pwa/README.md
 
 ## Deployment
 
-Both `backend/` and `pwa/` deploy as separate services on Railway.
+Both `backend/` and `pwa/` deploy as separate services on Railway, both pointed at the same GitHub repo with different **Root Directory** settings.
+
+### One-time Railway setup
+
+1. Create a Railway account and connect your GitHub.
+2. New Project → "Deploy from GitHub repo" → pick `rac-hub-submit`.
+3. The first service deploys from the repo root by default — rename it to **`backend`** and in **Settings → Source → Root Directory** set `backend`. Railway re-detects Node from `backend/package.json` and runs `npm start`.
+4. Add a second service to the same project: **+ New → GitHub Repo → same repo**. Name it **`pwa`**, set Root Directory to `pwa`. Same auto-detect → `npm start` runs the zero-dep static server.
+
+### Environment variables
+
+Backend service env vars (everything in `backend/.env.example` except `PORT`, which Railway sets automatically):
+
+- Google: `GOOGLE_SERVICE_ACCOUNT_JSON`, `INTRANET_CONTROL_SHEET_ID`
+- OAuth (for Drive writes): `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN`, `DRIVE_SUBMISSIONS_FOLDER_ID`
+- Auth: `PIN_LENGTH_MIN`, `PIN_LENGTH_MAX`, `SKILL_NOTIFY_SECRET`
+- Email: `RESEND_API_KEY`, `EMAIL_FROM`, `ADMIN_NOTIFY_EMAIL`
+- Network: `ALLOWED_ORIGIN` (the deployed PWA URL), `PWA_URL` (same — used in email deep links)
+
+PWA service: no env vars needed at runtime. The `apiBase` is hardcoded into `pwa/config.js` and changes via a commit + redeploy.
+
+### Order of operations
+
+Because each service depends on the other's URL, the deployment is a two-pass dance:
+
+1. Deploy backend first — it boots without `ALLOWED_ORIGIN` / `PWA_URL` set; `/health` works regardless. Note the assigned URL (e.g. `https://rac-hub-backend.up.railway.app`).
+2. Update `pwa/config.js` to point `apiBase` at the backend URL → commit + push → PWA auto-redeploys. Note its URL.
+3. On the backend service, set `ALLOWED_ORIGIN` and `PWA_URL` to the PWA URL → backend auto-redeploys.
+4. Smoke test: open PWA URL on phone, sign in, submit a test story, verify Drive folder appears. Run a `/admin/notify` curl with the prod URL to verify Resend email lands in the configured inbox.
+
+### What does NOT change for prod
+
+- **Google Cloud Console OAuth redirect URI** stays as `http://localhost:3001/oauth/callback`. The OAuth flow is a one-time local-only bootstrap that mints the refresh token; the deployed backend never does OAuth at runtime, only token-refresh against Google's token endpoint using the stored refresh token. Re-minting (rotation, scope change) still runs locally with `node oauth-bootstrap.js`.
+- **Resend sender domain** — for v1, sandbox `onboarding@resend.dev` continues to work; it only delivers to the Resend account's verified email. Adding a verified domain (e.g. `rirratjingu.com`) is optional polish for v1.1.
 
 ## Status
 
