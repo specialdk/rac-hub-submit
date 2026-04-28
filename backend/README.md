@@ -230,6 +230,105 @@ curl "http://localhost:3000/my-submissions?pin=1234"
 
 The endpoint reads all six destination tabs in a single Sheets `batchGet` call so it's one HTTP round-trip regardless of how many tabs we add later.
 
+### Admin endpoints
+
+All four admin endpoints re-validate the PIN against the Users tab and confirm `AccessLevel === "Admin"` on every call. There is no session — admin authority comes from the PIN every request. Any of these can return:
+
+| HTTP | Error code |
+|------|-----------|
+| 401 | `INVALID_PIN` |
+| 403 | `INACTIVE_USER`, `NOT_ADMIN` |
+
+Status string literals are exact-match including the space and capitalisation:
+- `Waiting Approval` (replaces the old `Pending`)
+- `Approved` (replaces the old `Live`)
+- `Archived` (unchanged)
+
+#### `GET /admin/pending?pin={pin}`
+
+Returns Waiting Approval rows across **Modal Stories + the 5 Manager tabs** (Hero Content excluded — no SubmittedBy column). Sorted by `ContentDate` desc.
+
+```json
+{
+  "ok": true,
+  "submissions": [
+    {
+      "title": "Toolbox talk on scaffolding",
+      "destination": "Safety Messages",
+      "submitted_by": "Rachael Schofield",
+      "submitted_date": "April 27, 2026",
+      "row_number": 4
+    }
+  ]
+}
+```
+
+```bash
+curl "http://localhost:3000/admin/pending?pin=YOUR_PIN"
+```
+
+#### `GET /admin/submission?pin={pin}&destination={d}&row={n}`
+
+Returns the data needed to render one row in the Review Detail screen. Only rows still in `Waiting Approval` are returned — already-actioned rows return `NOT_FOUND` so admin can't accidentally re-action.
+
+```json
+{
+  "ok": true,
+  "submission": {
+    "destination": "General",
+    "row_number": 5,
+    "title": "...",
+    "highlight": "...",
+    "text": "...",
+    "banner_url": "https://lh3.googleusercontent.com/d/<id>",
+    "body_urls": ["https://...", "https://..."],
+    "submitted_by": "Duane Kuru",
+    "submitted_date": "April 28, 2026"
+  }
+}
+```
+
+`body_urls` is empty for Manager destinations (those tabs only display a banner). For General, it's the `FinalURL` cell split on `;`.
+
+```bash
+curl "http://localhost:3000/admin/submission?pin=YOUR_PIN&destination=General&row=5"
+```
+
+#### `POST /admin/approve`
+
+Body: `{ "pin": "...", "destination": "...", "row_number": 5 }`
+
+Flips the `Status` cell to `Approved`. **For General**, also flips the matched Hero Content row (paired by `ContentNumber` ↔ `SlideNumber`) in the same `batchUpdate`.
+
+```bash
+curl -X POST http://localhost:3000/admin/approve \
+  -H "Content-Type: application/json" \
+  -d '{"pin":"YOUR_PIN","destination":"General","row_number":5}'
+```
+
+#### `POST /admin/reject`
+
+Body: `{ "pin": "...", "destination": "...", "row_number": 5, "reason": "Optional rejection reason" }`
+
+Flips `Status` to `Archived`. If `reason` is provided **and** the destination tab has an `AdminNote` column in the expected position (Manager tabs: column J; Modal Stories: column K — detected at runtime from the header row), the reason is written there. Hero Content has no AdminNote column; rejection of a General submission updates the Modal Stories row's AdminNote only.
+
+For General, also flips the matched Hero Content row in lockstep.
+
+```bash
+curl -X POST http://localhost:3000/admin/reject \
+  -H "Content-Type: application/json" \
+  -d '{"pin":"YOUR_PIN","destination":"CEO Messages","row_number":3,"reason":"Off-topic"}'
+```
+
+Approve / reject return `{"ok":true}` on success. Other failure codes:
+
+| HTTP | Error code | Meaning |
+|------|-----------|---------|
+| 400 | `INVALID_DESTINATION`, `INVALID_ROW` | Bad input |
+| 404 | `NOT_FOUND` | Row doesn't exist or isn't `Waiting Approval` |
+| 409 | `NOT_PENDING` | Row exists but is already Approved or Archived |
+| 500 | `HERO_ROW_NOT_FOUND` | General submission's Hero Content partner row is missing (data inconsistency) |
+
 ## Sheet schema dependency
 
 The Users tab column layout this code reads is documented in the project's memory file `project_users_tab_schema.md`. The relevant columns are:

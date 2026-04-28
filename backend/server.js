@@ -4,6 +4,7 @@ import cors from 'cors';
 import authRouter from './routes-auth.js';
 import submitRouter from './routes-submit.js';
 import mySubmissionsRouter from './routes-my-submissions.js';
+import adminRouter from './routes-admin.js';
 
 const app = express();
 
@@ -28,6 +29,7 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 app.use(authRouter);
 app.use(submitRouter);
 app.use(mySubmissionsRouter);
+app.use(adminRouter);
 
 const port = parseInt(process.env.PORT || '3000', 10);
 app.listen(port, () => {
