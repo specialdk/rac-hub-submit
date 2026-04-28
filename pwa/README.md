@@ -2,12 +2,18 @@
 
 Phone-first Progressive Web App. Plain HTML + vanilla JS + CSS — no framework, no TypeScript, no build pipeline.
 
-## What's here (items 4–5)
+## What's here (items 4–6)
 
 - **Sign-in screen** — PIN entry, calls `POST /auth`, persists `pin/name/email/role` to localStorage.
 - **Submit screen** — destination dropdown (General default), story text with live char counter (10–1000), optional title and highlight, photo picker (multiple, camera or library), per-photo remove (✕) and reorder (◀ ▶) controls, banner-framing tip, photo previews labelled Banner / Photo 2 / Photo 3 in selection order. First photo is the banner.
 - **Submitting screen** — "Resizing photos…" then "Uploading your story…", success message, retry on failure.
 - **Sign-out** — clears localStorage and returns to sign-in.
+- **My Recent Submissions screen** (item 6):
+  - Reverse-chronological list of the current user's last 10 stories across Modal Stories + 5 Manager tabs
+  - Each item shows title, destination, date, and a status badge (Approved / Waiting Approval / Archived)
+  - Manual Refresh button at the top + pull-to-refresh on touch devices
+  - Linked from a "View my recent submissions" button at the bottom of the Submit screen
+  - Empty state for a user who has never submitted
 - **On-device photo processing** (item 5):
   - Resize so longest edge ≤ 1920 px (no upscale)
   - Apply EXIF orientation by rotating canvas pixels (phones lie about orientation in metadata; the Intranet doesn't read EXIF)
@@ -19,7 +25,7 @@ Phone-first Progressive Web App. Plain HTML + vanilla JS + CSS — no framework,
 - **Banner cropping is not done client-side** — the existing Intranet uses CSS `background-size: cover` with `background-position: center center`, so the browser handles cropping at display time. The picker shows a tip telling submitters to frame the subject near the centre.
 
 What's *not* in this item yet:
-- **Item 6:** "My Recent Submissions" screen.
+- **Items 7-8:** Backend admin endpoints + PWA admin Pass 1 (review queue of submissions waiting approval, Review Detail, Approve/Reject).
 
 ## File layout
 

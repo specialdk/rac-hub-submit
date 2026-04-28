@@ -197,6 +197,39 @@ curl -X POST http://localhost:3000/submit \
 
 If a submitter submits twice in the same minute, the second folder gets `_2` appended (`_3`, `_4`, … as needed).
 
+### `GET /my-submissions?pin={pin}`
+Returns the current user's last 10 submissions across **Modal Stories + the 5 Manager tabs**. Hero Content is intentionally excluded — it has no `SubmittedBy` column.
+
+**Required env vars:** `INTRANET_CONTROL_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON`.
+
+**Success — 200:**
+```json
+{
+  "ok": true,
+  "submissions": [
+    {
+      "title": "Toolbox talk on scaffolding",
+      "destination": "Safety Messages",
+      "date": "April 27, 2026",
+      "status": "Waiting Approval",
+      "row_number": 4
+    },
+    ...
+  ]
+}
+```
+
+`row_number` is the 1-indexed sheet row (header is row 1) and is preserved for future deep-linking from admin notification emails.
+
+**Failure — same codes as `/auth`:** `INVALID_PIN` (401), `INACTIVE_USER` (403), `INTERNAL_ERROR` (500).
+
+**curl:**
+```bash
+curl "http://localhost:3000/my-submissions?pin=1234"
+```
+
+The endpoint reads all six destination tabs in a single Sheets `batchGet` call so it's one HTTP round-trip regardless of how many tabs we add later.
+
 ## Sheet schema dependency
 
 The Users tab column layout this code reads is documented in the project's memory file `project_users_tab_schema.md`. The relevant columns are:

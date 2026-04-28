@@ -35,6 +35,9 @@ body {
   line-height: 1.5;
   min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
+  /* Suppress the browser's native pull-to-refresh so our own can take over
+     on the recent screen without fighting it. */
+  overscroll-behavior-y: contain;
 }
 
 #app {
@@ -400,4 +403,124 @@ select {
   flex-direction: column;
   justify-content: center;
   min-height: calc(100dvh - 80px);
+}
+
+/* ---- Bottom link from Submit screen → Recent ---- */
+.bottom-link {
+  text-align: center;
+  margin: 24px 0 0;
+}
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--terracotta);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 12px 8px;
+  min-height: var(--tap-min);
+}
+.link-btn:hover {
+  color: var(--terracotta-dark);
+}
+
+/* ---- Recent screen: topbar buttons ---- */
+.topbar__back,
+.topbar__refresh {
+  background: none;
+  border: none;
+  color: var(--terracotta);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 8px 4px;
+  min-height: var(--tap-min);
+}
+.topbar__back:disabled,
+.topbar__refresh:disabled {
+  color: var(--charcoal-soft);
+  cursor: not-allowed;
+}
+
+/* ---- Recent list ---- */
+.recent-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+.recent-item {
+  background: white;
+  border: 1px solid rgba(45, 27, 14, 0.1);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.recent-item__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+.recent-item__title {
+  font-weight: 600;
+  color: var(--charcoal);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recent-item__meta {
+  color: var(--charcoal-soft);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+/* ---- Status badges ---- */
+.status {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.status--approved {
+  background: rgba(47, 122, 62, 0.15);
+  color: var(--success);
+}
+.status--waiting-approval {
+  background: rgba(212, 164, 62, 0.2);
+  color: #8a6a16;
+}
+.status--archived {
+  background: rgba(45, 27, 14, 0.1);
+  color: var(--charcoal-soft);
+}
+.status--unknown {
+  background: rgba(45, 27, 14, 0.06);
+  color: var(--charcoal-soft);
+}
+
+/* ---- Pull-to-refresh indicator ---- */
+.pull-indicator {
+  height: 0;
+  overflow: hidden;
+  transition: height 200ms ease;
+  text-align: center;
+  background: rgba(196, 101, 26, 0.05);
+  color: var(--charcoal-soft);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+}
+.pull-indicator__inner {
+  padding: 14px;
+  font-size: 13px;
+}
+.pull-indicator--ready {
+  background: rgba(196, 101, 26, 0.18);
+  color: var(--terracotta-dark);
+  font-weight: 500;
 }

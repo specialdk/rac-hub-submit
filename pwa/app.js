@@ -68,6 +68,12 @@ const state = {
   submitError: null,
   submitProgress: null, // 'resizing' | 'uploading' | 'done' | null
   lastFolderName: null,
+  recent: {
+    loading: false,
+    error: null,
+    items: null, // null = not yet loaded; [] = loaded but empty
+    loadedAt: null,
+  },
 };
 
 /* ---- Render entry ---- */
@@ -83,6 +89,9 @@ function render() {
       break;
     case 'submitting':
       renderSubmitting();
+      break;
+    case 'recent':
+      renderRecent();
       break;
     default:
       root.innerHTML = '';
@@ -261,6 +270,10 @@ function renderSubmit() {
         Submit story
       </button>
     </form>
+
+    <p class="bottom-link">
+      <button class="link-btn" type="button" id="view-recent-btn">View my recent submissions</button>
+    </p>
   `;
 
   if (state.submitError) {
@@ -286,6 +299,14 @@ function renderSubmit() {
   document.getElementById('photos').addEventListener('change', onPhotosPicked);
   document.getElementById('photo-grid').addEventListener('click', onPhotoControl);
   document.getElementById('submit-form').addEventListener('submit', onSubmit);
+  document.getElementById('view-recent-btn').addEventListener('click', () => {
+    state.screen = 'recent';
+    render();
+    // Auto-fetch on first open if we haven't loaded yet
+    if (state.recent.items === null && !state.recent.loading) {
+      fetchRecentSubmissions();
+    }
+  });
 }
 
 function renderPhotoCards(files) {
@@ -543,6 +564,141 @@ function errorMessageFor(code, status) {
       return code ? `Submit failed: ${code}` : 'Submit failed. Try again.';
   }
 }
+
+/* ---- Screen: my recent submissions ---- */
+function renderRecent() {
+  const u = state.user;
+  const r = state.recent;
+
+  let body;
+  if (r.loading && r.items === null) {
+    body = `
+      <div class="progress">
+        <div class="progress__spinner" aria-hidden="true"></div>
+        <div class="progress__step">Loading…</div>
+      </div>`;
+  } else if (r.error) {
+    body = `<div class="error">${escapeHtml(r.error)}</div>`;
+  } else if (!r.items || r.items.length === 0) {
+    body = `<p class="lead">No submissions yet — submit your first story above.</p>`;
+  } else {
+    body = `<ul class="recent-list">${r.items.map(renderRecentItem).join('')}</ul>`;
+  }
+
+  root.innerHTML = `
+    <div class="topbar">
+      <button class="topbar__back" type="button" id="back-btn">← Back</button>
+      <button class="topbar__refresh" type="button" id="refresh-btn"${r.loading ? ' disabled' : ''}>
+        ${r.loading ? '↻ Refreshing…' : '↻ Refresh'}
+      </button>
+    </div>
+    <div class="pull-indicator" id="pull-indicator"><div class="pull-indicator__inner">Pull down to refresh</div></div>
+    <h1>My Recent Submissions</h1>
+    <p class="lead">Your last 10 stories.</p>
+    ${body}
+  `;
+
+  document.getElementById('back-btn').addEventListener('click', () => {
+    state.screen = 'submit';
+    render();
+  });
+  document.getElementById('refresh-btn').addEventListener('click', () => {
+    if (!r.loading) fetchRecentSubmissions();
+  });
+}
+
+function renderRecentItem(item) {
+  const status = item.status || 'Unknown';
+  const statusClass = `status status--${status.toLowerCase().replace(/[^a-z]+/g, '-')}`;
+  return `
+    <li class="recent-item">
+      <div class="recent-item__row">
+        <span class="recent-item__title">${escapeHtml(item.title || '(untitled)')}</span>
+        <span class="${statusClass}">${escapeHtml(status)}</span>
+      </div>
+      <div class="recent-item__meta">
+        ${escapeHtml(item.destination || '')} · ${escapeHtml(item.date || '')}
+      </div>
+    </li>
+  `;
+}
+
+async function fetchRecentSubmissions() {
+  if (!state.user) return;
+  state.recent.loading = true;
+  state.recent.error = null;
+  if (state.screen === 'recent') render();
+
+  try {
+    const url = `${API}/my-submissions?pin=${encodeURIComponent(state.user.pin)}`;
+    const resp = await fetch(url);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      state.recent.error = errorMessageFor(data.error, resp.status);
+      state.recent.items = state.recent.items || [];
+    } else {
+      state.recent.items = Array.isArray(data.submissions) ? data.submissions : [];
+      state.recent.loadedAt = Date.now();
+    }
+  } catch (err) {
+    state.recent.error = 'Could not reach the server. Check your connection.';
+    state.recent.items = state.recent.items || [];
+  } finally {
+    state.recent.loading = false;
+    if (state.screen === 'recent') render();
+  }
+}
+
+/* Pull-to-refresh: only active when on the recent screen. The browser's
+   own pull-to-refresh is suppressed via CSS overscroll-behavior. */
+const PULL_THRESHOLD = 60;
+let pullStartY = null;
+let pullActive = false;
+
+document.addEventListener(
+  'touchstart',
+  (e) => {
+    if (state.screen !== 'recent') return;
+    if (window.scrollY === 0 && e.touches.length === 1) {
+      pullStartY = e.touches[0].clientY;
+      pullActive = false;
+    }
+  },
+  { passive: true },
+);
+
+document.addEventListener(
+  'touchmove',
+  (e) => {
+    if (state.screen !== 'recent' || pullStartY === null) return;
+    const delta = e.touches[0].clientY - pullStartY;
+    if (delta <= 0) return;
+    pullActive = true;
+    const indicator = document.getElementById('pull-indicator');
+    if (indicator) {
+      const capped = Math.min(delta, 100);
+      indicator.style.height = `${capped}px`;
+      indicator.classList.toggle('pull-indicator--ready', capped >= PULL_THRESHOLD);
+    }
+    // Prevent the page from scrolling further while we're pulling
+    if (delta > 5 && e.cancelable) e.preventDefault();
+  },
+  { passive: false },
+);
+
+document.addEventListener('touchend', () => {
+  if (state.screen !== 'recent') return;
+  const indicator = document.getElementById('pull-indicator');
+  const triggered =
+    pullActive && indicator && parseInt(indicator.style.height || '0', 10) >= PULL_THRESHOLD;
+  if (indicator) {
+    indicator.style.height = '';
+    indicator.classList.remove('pull-indicator--ready');
+  }
+  pullStartY = null;
+  pullActive = false;
+  if (triggered && !state.recent.loading) fetchRecentSubmissions();
+});
 
 // ISO 8601 timestamp with the device's local timezone offset, to-the-second.
 // Date.prototype.toISOString() always emits UTC ("...Z"), which would make
