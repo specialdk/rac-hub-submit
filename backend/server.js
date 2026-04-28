@@ -5,6 +5,7 @@ import authRouter from './routes-auth.js';
 import submitRouter from './routes-submit.js';
 import mySubmissionsRouter from './routes-my-submissions.js';
 import adminRouter from './routes-admin.js';
+import notifyRouter from './routes-notify.js';
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use(authRouter);
 app.use(submitRouter);
 app.use(mySubmissionsRouter);
 app.use(adminRouter);
+app.use(notifyRouter);
 
 const port = parseInt(process.env.PORT || '3000', 10);
 app.listen(port, () => {

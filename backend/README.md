@@ -329,6 +329,42 @@ Approve / reject return `{"ok":true}` on success. Other failure codes:
 | 409 | `NOT_PENDING` | Row exists but is already Approved or Archived |
 | 500 | `HERO_ROW_NOT_FOUND` | General submission's Hero Content partner row is missing (data inconsistency) |
 
+### `POST /admin/notify`
+
+Called by the **CoWork skill** (not by the PWA) after it inserts a new `Waiting Approval` row, to nudge the admin to review. Protected by a shared-secret header — there is no PIN involved because the skill isn't a user.
+
+**Headers:** `X-Skill-Secret: <SKILL_NOTIFY_SECRET>` (constant-time compared)
+**Body:**
+```json
+{
+  "destination": "General",
+  "row_number": 5,
+  "title": "Story title here",
+  "submitted_by": "Rachael Schofield"
+}
+```
+
+**Sends an email** to `ADMIN_NOTIFY_EMAIL` via Resend with subject `"New RAC Hub story awaiting review"`. Body includes title + submitter + destination, plus a tap-friendly button linking to `{PWA_URL}/?review={destination}&row={row_number}` — which the PWA's boot logic recognises and lands an Admin user straight on the Review Detail screen.
+
+**Required env vars:** `RESEND_API_KEY`, `EMAIL_FROM`, `ADMIN_NOTIFY_EMAIL`, `PWA_URL`, `SKILL_NOTIFY_SECRET`.
+
+| HTTP | Error code |
+|------|-----------|
+| 200 | `{ ok: true }` |
+| 401 | `BAD_SECRET` |
+| 400 | `INVALID_DESTINATION`, `INVALID_ROW`, `INVALID_TITLE`, `INVALID_SUBMITTED_BY` |
+| 500 | `EMAIL_FAILED`, `INTERNAL_ERROR` |
+
+The handler does **not** retry failed sends — per the brief, "log and move on". The skill can decide whether to retry on its next run.
+
+**curl:**
+```bash
+curl -X POST http://localhost:3000/admin/notify \
+  -H "Content-Type: application/json" \
+  -H "X-Skill-Secret: $SKILL_NOTIFY_SECRET" \
+  -d '{"destination":"General","row_number":5,"title":"Test story","submitted_by":"Duane Kuru"}'
+```
+
 ## Sheet schema dependency
 
 The Users tab column layout this code reads is documented in the project's memory file `project_users_tab_schema.md`. The relevant columns are:
