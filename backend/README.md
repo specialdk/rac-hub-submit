@@ -27,11 +27,7 @@ Stateless. No database. All persistent data lives in Google Drive (submission fo
    cp .env.example .env
    ```
 
-   The two essentials for `/auth` are:
-   - `GOOGLE_SERVICE_ACCOUNT_JSON` — base64-encoded contents of the service account JSON file
-   - `INTRANET_CONTROL_SHEET_ID` — the spreadsheet ID from the Sheet's URL
-
-   Encode the service account JSON like so:
+3. **Service account (Sheets only)** — encode and paste:
    ```bash
    # macOS/Linux
    base64 -i path/to/service-account.json | tr -d '\n'
@@ -39,12 +35,16 @@ Stateless. No database. All persistent data lives in Google Drive (submission fo
    # Windows PowerShell
    [Convert]::ToBase64String([IO.File]::ReadAllBytes("path\to\service-account.json"))
    ```
+   Paste the resulting single-line string as `GOOGLE_SERVICE_ACCOUNT_JSON`. Share the IntranetControl Sheet with the service account email (Editor for write endpoints, Viewer is enough for read-only).
 
-   Paste the resulting single-line string as the value of `GOOGLE_SERVICE_ACCOUNT_JSON`.
+4. **OAuth client (Drive only)** — service accounts cannot own files in a personal Google Drive (no storage quota), so Drive writes run as the human owner via OAuth:
+   1. In Google Cloud Console: **APIs & Services → OAuth consent screen** — configure as External, add scope `drive.file` (non-sensitive, no verification needed), publish to Production.
+   2. **APIs & Services → Credentials → + Create credentials → OAuth client ID** — type **Web application**, authorized redirect URI `http://localhost:3001/oauth/callback`.
+   3. Paste the Client ID and Client Secret into `.env` as `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`.
+   4. Run `node oauth-bootstrap.js` once. It opens a browser, you click Allow, and it prints a refresh token. Paste it into `.env` as `GOOGLE_OAUTH_REFRESH_TOKEN`.
+   5. Share the parent Drive folder with the Google account that authorized — the OAuth flow uses that account's permissions.
 
-3. Make sure the service account email has been **shared on the IntranetControl Sheet** (Viewer is enough for `/auth`).
-
-4. Run:
+5. Run:
    ```bash
    npm run dev    # restarts on file changes
    # or
@@ -225,7 +225,8 @@ backend/
 ├── auth.js             Pure findUserByPin logic (testable, no I/O)
 ├── submit.js           Pure submission helpers: hash, slug, folder name,
 │                       image-type detection, JSON construction (testable)
-├── google-client.js    Service account → Sheets/Drive client factories
+├── google-client.js    Sheets via service account, Drive via OAuth user
+├── oauth-bootstrap.js  One-time helper to mint the OAuth refresh token
 ├── package.json
 ├── .env.example
 └── test/
