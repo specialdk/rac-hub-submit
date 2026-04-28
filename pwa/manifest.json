@@ -1,0 +1,19 @@
+{
+  "name": "RAC Hub Submit",
+  "short_name": "RAC Hub",
+  "description": "Submit stories to the RAC Intranet from your phone.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F5E6D3",
+  "theme_color": "#C4651A",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
