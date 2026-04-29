@@ -329,6 +329,7 @@ function renderSubmit() {
           placeholder="What happened? Tell the story… or tap Dictate to speak it."
           maxlength="${TEXT_MAX + 200}"
         >${escapeHtml(form.text)}</textarea>
+        ${SPEECH_SUPPORTED ? '<div class="mic-status" id="mic-status" aria-live="polite"></div>' : ''}
         <div class="field__count${overLimit ? ' field__count--over' : ''}">
           ${charCount} / ${TEXT_MAX}${charCount < TEXT_MIN ? ` · ${TEXT_MIN - charCount} more to go` : ''}
         </div>
@@ -528,57 +529,110 @@ function refreshPickerCap() {
    the 'input' event, we update state.form.text and refresh the submit
    button manually.
 */
+function setMicStatus(text) {
+  const el = document.getElementById('mic-status');
+  if (el) el.textContent = text;
+}
+
 function ensureRecognition() {
   if (recognition || !SPEECH_SUPPORTED) return recognition;
   recognition = new SpeechRecognitionImpl();
-  recognition.continuous = true;
-  recognition.interimResults = false;
+  // iOS Safari and Chrome handle continuous mode differently. iOS often
+  // returns no results when continuous=true. One-shot sessions plus an
+  // auto-restart on end gives the same "keeps listening" feeling and
+  // works on both. interimResults=true lets us show partial transcription
+  // as the engine works — also helps surface "is anything happening?"
+  // for the user, especially on iOS where the round-trip can be slow.
+  recognition.continuous = false;
+  recognition.interimResults = true;
   recognition.lang = 'en-AU';
+
+  let gotAnyFinalThisSession = false;
+
+  recognition.onstart = () => {
+    setMicStatus('Listening… speak now');
+    gotAnyFinalThisSession = false;
+  };
+
+  recognition.onspeechstart = () => {
+    setMicStatus('Hearing you…');
+  };
 
   recognition.onresult = (event) => {
     const textarea = document.getElementById('text');
     if (!textarea) return;
-    let appended = '';
+    let final = '';
+    let interim = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
+      const transcript = event.results[i][0].transcript;
       if (event.results[i].isFinal) {
-        appended += event.results[i][0].transcript;
+        final += transcript;
+      } else {
+        interim += transcript;
       }
     }
-    appended = appended.trim();
-    if (!appended) return;
-    const current = textarea.value;
-    const sep = current && !/\s$/.test(current) ? ' ' : '';
-    textarea.value = current + sep + appended;
-    state.form.text = textarea.value;
-    refreshSubmitDisabled();
+    final = final.trim();
+    if (final) {
+      gotAnyFinalThisSession = true;
+      const current = textarea.value;
+      const sep = current && !/\s$/.test(current) ? ' ' : '';
+      textarea.value = current + sep + final;
+      state.form.text = textarea.value;
+      refreshSubmitDisabled();
+      setMicStatus(recognitionActive ? 'Listening…' : '');
+    } else if (interim.trim()) {
+      setMicStatus(`… ${interim.trim()}`);
+    }
+  };
+
+  recognition.onnomatch = () => {
+    setMicStatus("Couldn't make that out — try again.");
   };
 
   recognition.onerror = (event) => {
     if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
       recognitionActive = false;
       updateMicButton(false);
-      alert(
-        'Microphone access blocked. Allow microphone permission for this site ' +
-          'in your browser settings to use dictation.',
-      );
+      setMicStatus('Microphone blocked. Check browser settings.');
+    } else if (event.error === 'audio-capture') {
+      recognitionActive = false;
+      updateMicButton(false);
+      setMicStatus('No mic detected. Check your device.');
     } else if (event.error === 'no-speech') {
-      // Common — user paused too long. Let onend restart if still active.
+      // Quiet error — user just paused. onend will restart.
+    } else if (event.error === 'aborted') {
+      // We called stop(); benign.
     } else {
       console.warn('Speech recognition error:', event.error);
+      setMicStatus(`Error: ${event.error}. You can keep typing.`);
     }
   };
 
   recognition.onend = () => {
     if (recognitionActive) {
-      // Browser stopped during a pause; restart while the user still wants to dictate
-      try {
-        recognition.start();
-      } catch {
-        recognitionActive = false;
-        updateMicButton(false);
-      }
+      // Auto-restart after a small delay — iOS needs the previous session
+      // to fully release before a new start() will work.
+      setTimeout(() => {
+        if (recognitionActive) {
+          try {
+            recognition.start();
+          } catch (err) {
+            recognitionActive = false;
+            updateMicButton(false);
+            setMicStatus("Stopped (couldn't restart). Tap Dictate to resume.");
+          }
+        }
+      }, 250);
     } else {
       updateMicButton(false);
+      if (!gotAnyFinalThisSession) {
+        setMicStatus(
+          "No transcription captured. Try speaking louder, or use the " +
+            "microphone button on your phone keyboard instead.",
+        );
+      } else {
+        setMicStatus('');
+      }
     }
   };
 
