@@ -118,6 +118,55 @@ h2 {
   margin-bottom: 6px;
   color: var(--charcoal);
 }
+.field__label-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  gap: 12px;
+}
+.field__label-row .field__label {
+  margin-bottom: 0;
+}
+
+/* ---- Dictation (speech-to-text) button ---- */
+.mic-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  background: var(--terracotta);
+  color: white;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
+  flex: none;
+}
+.mic-btn:hover:not(:disabled) {
+  background: var(--terracotta-dark);
+}
+.mic-btn:active {
+  transform: scale(0.97);
+}
+.mic-btn__icon {
+  font-size: 16px;
+  line-height: 1;
+}
+.mic-btn--active {
+  background: var(--error);
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+.mic-btn--active:hover {
+  background: var(--error);
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(184, 52, 30, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(184, 52, 30, 0); }
+}
 .field__hint {
   font-size: 13px;
   color: var(--charcoal-soft);

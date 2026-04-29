@@ -15,6 +15,16 @@ const DESTINATIONS = [
 
 const TEXT_MIN = 10;
 const TEXT_MAX = 1000;
+
+// Web Speech API feature detection. Both names exist in the wild —
+// webkitSpeechRecognition on iOS Safari and older Chrome, SpeechRecognition
+// in the modern spec. If neither is present we hide the dictation button
+// entirely (graceful degradation — typing still works).
+const SpeechRecognitionImpl =
+  window.SpeechRecognition || window.webkitSpeechRecognition || null;
+const SPEECH_SUPPORTED = !!SpeechRecognitionImpl;
+let recognition = null;
+let recognitionActive = false;
 // 10 total = banner + up to 9 body. The backend will accept up to 11
 // (banner + 10) as a safety net plus a 20 MB total-bytes cap, but the
 // PWA enforces a tighter, user-friendly count cap. Post-resize totals
@@ -135,6 +145,18 @@ function render() {
     ensurePendingPoll();
   } else {
     clearPendingPoll();
+  }
+
+  // Stop dictation if we're navigating off the submit screen — the mic
+  // button and textarea are about to disappear, so the recogniser would
+  // be running with no UI. Tapping Submit also triggers this naturally.
+  if (state.screen !== 'submit' && recognitionActive) {
+    recognitionActive = false;
+    if (recognition) {
+      try {
+        recognition.stop();
+      } catch {}
+    }
   }
 
   switch (state.screen) {
@@ -290,11 +312,21 @@ function renderSubmit() {
       </div>
 
       <div class="field">
-        <label class="field__label" for="text">Your story</label>
+        <div class="field__label-row">
+          <label class="field__label" for="text">Your story</label>
+          ${
+            SPEECH_SUPPORTED
+              ? `<button class="mic-btn" type="button" id="mic-btn" aria-label="Start dictation">
+                  <span class="mic-btn__icon" aria-hidden="true">🎤</span>
+                  <span class="mic-btn__label">Dictate</span>
+                </button>`
+              : ''
+          }
+        </div>
         <textarea
           id="text"
           name="text"
-          placeholder="What happened? Tell the story…"
+          placeholder="What happened? Tell the story… or tap Dictate to speak it."
           maxlength="${TEXT_MAX + 200}"
         >${escapeHtml(form.text)}</textarea>
         <div class="field__count${overLimit ? ' field__count--over' : ''}">
@@ -381,6 +413,8 @@ function renderSubmit() {
   document.getElementById('photos').addEventListener('change', onPhotosPicked);
   document.getElementById('photo-grid').addEventListener('click', onPhotoControl);
   document.getElementById('submit-form').addEventListener('submit', onSubmit);
+  const micBtn = document.getElementById('mic-btn');
+  if (micBtn) micBtn.addEventListener('click', toggleDictation);
   document.getElementById('view-recent-btn').addEventListener('click', () => {
     state.screen = 'recent';
     render();
@@ -476,6 +510,113 @@ function refreshPickerCap() {
   const atCap = state.form.files.length >= MAX_PHOTOS;
   picker.classList.toggle('photo-picker--disabled', atCap);
   input.disabled = atCap;
+}
+
+/* ---- Speech-to-text dictation -------------------------------------------
+   Web Speech API → SpeechRecognition / webkitSpeechRecognition. Browser
+   prompts for mic permission on first use, then runs through the system's
+   built-in speech engine (Siri on iOS, Google's on Android Chrome).
+
+   Continuous mode keeps the recogniser running across natural pauses.
+   Some browsers (notably Chrome) end the session after extended silence
+   even in continuous mode — onend auto-restarts while the user-facing
+   "is dictating?" flag is still true, so a single tap-to-start works for
+   long dictations.
+
+   Final transcripts are appended to whatever's currently in the textarea
+   with a single space separator. Since JS-driven value changes don't fire
+   the 'input' event, we update state.form.text and refresh the submit
+   button manually.
+*/
+function ensureRecognition() {
+  if (recognition || !SPEECH_SUPPORTED) return recognition;
+  recognition = new SpeechRecognitionImpl();
+  recognition.continuous = true;
+  recognition.interimResults = false;
+  recognition.lang = 'en-AU';
+
+  recognition.onresult = (event) => {
+    const textarea = document.getElementById('text');
+    if (!textarea) return;
+    let appended = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        appended += event.results[i][0].transcript;
+      }
+    }
+    appended = appended.trim();
+    if (!appended) return;
+    const current = textarea.value;
+    const sep = current && !/\s$/.test(current) ? ' ' : '';
+    textarea.value = current + sep + appended;
+    state.form.text = textarea.value;
+    refreshSubmitDisabled();
+  };
+
+  recognition.onerror = (event) => {
+    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+      recognitionActive = false;
+      updateMicButton(false);
+      alert(
+        'Microphone access blocked. Allow microphone permission for this site ' +
+          'in your browser settings to use dictation.',
+      );
+    } else if (event.error === 'no-speech') {
+      // Common — user paused too long. Let onend restart if still active.
+    } else {
+      console.warn('Speech recognition error:', event.error);
+    }
+  };
+
+  recognition.onend = () => {
+    if (recognitionActive) {
+      // Browser stopped during a pause; restart while the user still wants to dictate
+      try {
+        recognition.start();
+      } catch {
+        recognitionActive = false;
+        updateMicButton(false);
+      }
+    } else {
+      updateMicButton(false);
+    }
+  };
+
+  return recognition;
+}
+
+function toggleDictation() {
+  if (!SPEECH_SUPPORTED) return;
+  ensureRecognition();
+  if (recognitionActive) {
+    recognitionActive = false;
+    try {
+      recognition.stop();
+    } catch {}
+    updateMicButton(false);
+  } else {
+    recognitionActive = true;
+    try {
+      recognition.start();
+      updateMicButton(true);
+    } catch (err) {
+      // Safari throws if start is called while already started — flip state to match
+      recognitionActive = false;
+      updateMicButton(false);
+      console.warn('Could not start dictation:', err);
+    }
+  }
+}
+
+function updateMicButton(active) {
+  const btn = document.getElementById('mic-btn');
+  if (!btn) return;
+  btn.classList.toggle('mic-btn--active', active);
+  btn.setAttribute('aria-label', active ? 'Stop dictation' : 'Start dictation');
+  const labelEl = btn.querySelector('.mic-btn__label');
+  const iconEl = btn.querySelector('.mic-btn__icon');
+  if (labelEl) labelEl.textContent = active ? 'Stop' : 'Dictate';
+  if (iconEl) iconEl.textContent = active ? '⏹' : '🎤';
 }
 
 function refreshSubmitDisabled() {
