@@ -334,7 +334,6 @@ function renderSubmit() {
             id="photos"
             type="file"
             accept="image/*"
-            capture="environment"
             multiple
             ${form.files.length >= MAX_PHOTOS ? 'disabled' : ''}
           />
