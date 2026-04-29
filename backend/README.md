@@ -372,6 +372,87 @@ curl -X POST http://localhost:3000/admin/notify \
   -d '{"destination":"General","row_number":5,"title":"Test story","submitted_by":"Duane Kuru"}'
 ```
 
+### Skill endpoints
+
+Three endpoints called by the **CoWork skill** (not the PWA) to close the loop after a submission folder lands in Drive. Same shared-secret auth as `/admin/notify`: `X-Skill-Secret: <SKILL_NOTIFY_SECRET>` header, constant-time compared.
+
+#### `GET /skill/pending`
+
+Lists every submission folder in `DRIVE_SUBMISSIONS_FOLDER_ID`, parses each folder's `submission.json`, and returns an array of `{ folder_id, folder_name, submission }` (or `{ folder_id, folder_name, error }` when the JSON is missing or malformed).
+
+```json
+{
+  "ok": true,
+  "submissions": [
+    {
+      "folder_id": "1abc...",
+      "folder_name": "2026-04-27_14-32_rachael-schofield",
+      "submission": { "schema_version": "1.0", "submitter_name": "...", ... }
+    },
+    {
+      "folder_id": "1xyz...",
+      "folder_name": "2026-04-27_15-00_broken-folder",
+      "error": "MISSING_SUBMISSION_JSON"
+    }
+  ]
+}
+```
+
+```bash
+curl https://<backend-url>/skill/pending \
+  -H "X-Skill-Secret: $SKILL_NOTIFY_SECRET"
+```
+
+#### `POST /skill/process`
+
+Body:
+```json
+{
+  "folder_id": "1abc...",
+  "cleaned_text": "Body text after the skill's cleanup pass.",
+  "resolved_title": "Tripod Wins",
+  "resolved_highlight": "One short hook line ✨",
+  "admin_note": "Auto-cleaned: 3 fillers, 1 swear removed."  // optional
+}
+```
+
+Steps:
+1. Reads `submission.json` from the folder to get destination, submitter_name, submitted_at, banner/body filenames.
+2. Downloads images, uploads to `DRIVE_PHOTOS_FOLDER_ID` with stable names per contract §3 (`{date}_{slugified-title}_{role}.{ext}`), grants anyone-with-link reader permission so the `lh3.googleusercontent.com/d/{id}` URLs render publicly.
+3. Computes next `ContentNumber` (= `MAX(existing) + 1` per contract §7), inserts row 2 in the destination tab(s) with `status = "Waiting Approval"`. For General destination, both the Modal Stories row and the matched Hero Content row are inserted in a single `batchUpdate` call so the linkage holds atomically.
+4. Moves the submission folder Submissions → Processed.
+
+**Atomicity note:** if a step after image upload fails, the photos are already in `Photos/` and the sheet may be partially written. Backend does not auto-rollback. The skill should call `/skill/quarantine` to record the failure and move the source folder out of the active queue.
+
+Success returns the URLs the skill might want to log:
+```json
+{
+  "ok": true,
+  "destination": "General",
+  "banner_url": "https://lh3.googleusercontent.com/d/1abc...",
+  "body_urls": ["https://lh3.googleusercontent.com/d/1xyz...", ...]
+}
+```
+
+#### `POST /skill/quarantine`
+
+Body:
+```json
+{
+  "folder_id": "1abc...",
+  "error_text": "submission.json failed to parse: Unexpected token at line 5"  // optional
+}
+```
+
+Writes an `error.txt` (with timestamp + reason) into the submission folder, then moves the folder Submissions → Quarantine. Returns `{ ok: true }`.
+
+| HTTP | Error code | Endpoint |
+|------|-----------|----------|
+| 401 | `BAD_SECRET` | all |
+| 400 | `INVALID_FOLDER_ID`, `INVALID_CLEANED_TEXT`, `INVALID_RESOLVED_TITLE`, `INVALID_RESOLVED_HIGHLIGHT`, `INVALID_DESTINATION_IN_SUBMISSION`, `INVALID_SUBMISSION_JSON`, `BANNER_MISSING_IN_FOLDER` | `/skill/process` |
+| 404 | `SUBMISSION_NOT_FOUND` | `/skill/process` |
+| 500 | `INTERNAL_ERROR`, `PROCESS_FAILED`, `QUARANTINE_FAILED` | all |
+
 ## Sheet schema dependency
 
 The Users tab column layout this code reads is documented in the project's memory file `project_users_tab_schema.md`. The relevant columns are:
