@@ -424,15 +424,18 @@ Steps:
 
 **Atomicity note:** if a step after image upload fails, the photos are already in `Photos/` and the sheet may be partially written. Backend does not auto-rollback. The skill should call `/skill/quarantine` to record the failure and move the source folder out of the active queue.
 
-Success returns the URLs the skill might want to log:
+Success returns the URLs and the new row number for downstream use:
 ```json
 {
   "ok": true,
   "destination": "General",
+  "row_number": 2,
   "banner_url": "https://lh3.googleusercontent.com/d/1abc...",
   "body_urls": ["https://lh3.googleusercontent.com/d/1xyz...", ...]
 }
 ```
+
+`row_number` is always **2** — `/skill/process` inserts at the top of the destination tab(s), so the new row is the first data row directly below the header. The skill passes this to `/admin/notify` for the email's deep-link URL. For General destination, both the Modal Stories and Hero Content rows land at row 2 in their respective tabs.
 
 #### `POST /skill/quarantine`
 

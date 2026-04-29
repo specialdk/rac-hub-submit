@@ -386,14 +386,25 @@ router.post('/skill/process', async (req, res) => {
     // 4. Move folder Submissions → Processed
     await moveFolder(drive, folder_id, processedParent, submissionsParent);
 
+    // The new row is always at sheet row 2 — insertAndPopulateTopRow inserts
+    // at startIndex 1 (zero-indexed) which corresponds to the row directly
+    // below the header. Existing rows shift down by one. For General, the
+    // Modal Stories and Hero Content rows both land at row 2 in their
+    // respective tabs (matching ContentNumber/SlideNumber preserves the
+    // linkage). Returning this lets the skill pass it straight to
+    // /admin/notify for the email's deep link.
+    const NEW_ROW_NUMBER = 2;
+
     logSkill('/skill/process', true, 'OK', {
       folder_id,
       destination,
+      row_number: NEW_ROW_NUMBER,
       body_image_count: bodyImages.length,
     });
     return res.json({
       ok: true,
       destination,
+      row_number: NEW_ROW_NUMBER,
       banner_url: bannerUrl,
       body_urls: bodyUrls,
     });
