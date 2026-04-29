@@ -44,6 +44,13 @@ Stateless. No database. All persistent data lives in Google Drive (submission fo
    4. Run `node oauth-bootstrap.js` once. It opens a browser, you click Allow, and it prints a refresh token. Paste it into `.env` as `GOOGLE_OAUTH_REFRESH_TOKEN`.
    5. Share the parent Drive folder with the Google account that authorized — the OAuth flow uses that account's permissions.
 
+5. **Skill folder access (only needed if you'll run the intranet-post skill)** — the OAuth scope is `drive.file`, which only grants access to files this app has created or opened. The skill needs to write into three sibling folders that Duane created manually (`Intranet Submissions Processed/`, `Intranet Submissions Quarantine/`, `Intranet Photos/`) — those aren't accessible to the OAuth client by default. The Google Picker is the canonical way to grant access to existing folders under `drive.file`:
+   1. In Cloud Console: **APIs & Services → Library → Google Picker API → Enable**
+   2. **APIs & Services → Credentials → + Create credentials → API key** → restrict to "Picker API" only
+   3. Paste the API key into `.env` as `GOOGLE_PICKER_API_KEY`
+   4. Run `node picker-setup.js` once. Open the printed `http://localhost:3001` URL, pick the three folders in order (Processed → Quarantine → Photos). Script prints three folder IDs to your terminal.
+   5. Paste the three lines into `.env` (and into Railway env vars) as `DRIVE_PROCESSED_FOLDER_ID`, `DRIVE_QUARANTINE_FOLDER_ID`, `DRIVE_PHOTOS_FOLDER_ID`. Access persists for the life of the OAuth refresh token — re-run only if you revoke and re-mint the token.
+
 5. Run:
    ```bash
    npm run dev    # restarts on file changes
@@ -395,6 +402,8 @@ backend/
 │                       image-type detection, JSON construction (testable)
 ├── google-client.js    Sheets via service account, Drive via OAuth user
 ├── oauth-bootstrap.js  One-time helper to mint the OAuth refresh token
+├── picker-setup.js     One-time helper to grant Drive folder access (skill setup)
+├── picker-setup.html   Browser-side Picker UI for picker-setup.js
 ├── package.json
 ├── .env.example
 └── test/
