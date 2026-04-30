@@ -98,8 +98,10 @@ const state = {
     data: null,
     destination: null,
     rowNumber: null,
-    acting: false, // true while approve/reject in flight
+    acting: false, // true while approve/reject/edit in flight
     rejecting: false, // true when the reject reason form is open
+    editing: false, // true when the edit form is open
+    editValues: null, // { title, highlight, text } — only while editing
   },
   toast: null, // transient banner shown at the top of any screen
 };
@@ -1135,36 +1137,98 @@ function renderReview() {
       </aside>`
     : '';
 
-  const footerHtml = r.rejecting
+  // Body content swaps when editing — form replaces the read-only preview
+  // for title/highlight/text. Carousel + meta card stay (admin can see
+  // banner while editing; meta is auto and not editable).
+  const bodyContentHtml = r.editing
     ? `
-      <form class="reject-form" id="reject-form">
-        <label class="reject-form__label" for="reject-reason">
-          Why are you rejecting this? <span class="field__hint">(optional)</span>
-        </label>
-        <textarea
-          id="reject-reason"
-          class="reject-form__textarea"
-          placeholder="A short note saved alongside the rejection. Won't be shown to the submitter."
-          rows="3"
-        ></textarea>
-        <div class="reject-form__actions">
-          <button class="btn" type="submit" id="confirm-reject-btn"${r.acting ? ' disabled' : ''}>
-            ${r.acting ? 'Working…' : 'Confirm rejection'}
-          </button>
-          <button class="btn btn--secondary" type="button" id="cancel-reject-btn"${r.acting ? ' disabled' : ''}>
-            Cancel
-          </button>
+      <form class="review-edit" id="edit-form" novalidate>
+        <div class="field">
+          <label class="field__label" for="edit-title">Title</label>
+          <input
+            id="edit-title"
+            type="text"
+            class="review-edit__input"
+            value="${escapeAttr(r.editValues?.title ?? '')}"
+            maxlength="200"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
+          <label class="field__label" for="edit-highlight">Highlight (subtitle on the Hub)</label>
+          <input
+            id="edit-highlight"
+            type="text"
+            class="review-edit__input"
+            value="${escapeAttr(r.editValues?.highlight ?? '')}"
+            maxlength="500"
+            autocomplete="off"
+          />
+        </div>
+        <div class="field">
+          <label class="field__label" for="edit-text">Body</label>
+          <textarea
+            id="edit-text"
+            class="review-edit__textarea"
+            rows="10"
+            maxlength="1200"
+          >${escapeHtml(r.editValues?.text ?? '')}</textarea>
+          <div class="field__hint">10 to 1000 characters. Admin edits stay as Waiting Approval until you tap Approve separately.</div>
         </div>
       </form>`
     : `
-      <div class="review-footer">
-        <button class="btn btn--secondary" type="button" id="reject-btn"${r.acting ? ' disabled' : ''}>
-          Reject
-        </button>
-        <button class="btn" type="button" id="approve-btn"${r.acting ? ' disabled' : ''}>
-          ${r.acting ? 'Working…' : 'Approve'}
-        </button>
+      <div class="review-body__text">
+        ${renderReviewBody(d.text)}
+      </div>
+      ${highlightsHtml}
+      <div class="review-meta-card">
+        <div><strong>Submitted by</strong> ${escapeHtml(d.submitted_by || 'Unknown')}</div>
+        <div><strong>Destination</strong> ${escapeHtml(d.destination || '')}</div>
       </div>`;
+
+  const footerHtml = r.editing
+    ? `
+      <div class="review-footer">
+        <button class="btn btn--secondary" type="button" id="cancel-edit-btn"${r.acting ? ' disabled' : ''}>
+          Cancel
+        </button>
+        <button class="btn" type="button" id="save-edit-btn"${r.acting ? ' disabled' : ''}>
+          ${r.acting ? 'Saving…' : 'Save changes'}
+        </button>
+      </div>`
+    : r.rejecting
+      ? `
+        <form class="reject-form" id="reject-form">
+          <label class="reject-form__label" for="reject-reason">
+            Why are you rejecting this? <span class="field__hint">(optional)</span>
+          </label>
+          <textarea
+            id="reject-reason"
+            class="reject-form__textarea"
+            placeholder="A short note saved alongside the rejection. Won't be shown to the submitter."
+            rows="3"
+          ></textarea>
+          <div class="reject-form__actions">
+            <button class="btn" type="submit" id="confirm-reject-btn"${r.acting ? ' disabled' : ''}>
+              ${r.acting ? 'Working…' : 'Confirm rejection'}
+            </button>
+            <button class="btn btn--secondary" type="button" id="cancel-reject-btn"${r.acting ? ' disabled' : ''}>
+              Cancel
+            </button>
+          </div>
+        </form>`
+      : `
+        <div class="review-footer review-footer--three">
+          <button class="btn btn--secondary" type="button" id="reject-btn"${r.acting ? ' disabled' : ''}>
+            Reject
+          </button>
+          <button class="btn btn--secondary" type="button" id="edit-btn"${r.acting ? ' disabled' : ''}>
+            Edit
+          </button>
+          <button class="btn" type="button" id="approve-btn"${r.acting ? ' disabled' : ''}>
+            ${r.acting ? 'Working…' : 'Approve'}
+          </button>
+        </div>`;
 
   root.innerHTML = `
     ${toastHtml()}
@@ -1177,14 +1241,7 @@ function renderReview() {
       </header>
       <div class="review-body">
         ${carouselHtml}
-        <div class="review-body__text">
-          ${renderReviewBody(d.text)}
-        </div>
-        ${highlightsHtml}
-        <div class="review-meta-card">
-          <div><strong>Submitted by</strong> ${escapeHtml(d.submitted_by || 'Unknown')}</div>
-          <div><strong>Destination</strong> ${escapeHtml(d.destination || '')}</div>
-        </div>
+        ${bodyContentHtml}
       </div>
       ${footerHtml}
     </article>
@@ -1194,12 +1251,39 @@ function renderReview() {
   document.getElementById('close-btn').addEventListener('click', closeReview);
   const approve = document.getElementById('approve-btn');
   const reject = document.getElementById('reject-btn');
+  const editBtn = document.getElementById('edit-btn');
   const rejectForm = document.getElementById('reject-form');
   const cancelReject = document.getElementById('cancel-reject-btn');
+  const cancelEdit = document.getElementById('cancel-edit-btn');
+  const saveEdit = document.getElementById('save-edit-btn');
   if (approve) approve.addEventListener('click', onApprove);
   if (reject) reject.addEventListener('click', onReject);
+  if (editBtn) editBtn.addEventListener('click', onEdit);
   if (rejectForm) rejectForm.addEventListener('submit', onConfirmReject);
   if (cancelReject) cancelReject.addEventListener('click', onCancelReject);
+  if (cancelEdit) cancelEdit.addEventListener('click', onCancelEdit);
+  if (saveEdit) saveEdit.addEventListener('click', onSaveEdit);
+
+  // Wire edit-form input listeners to keep state.review.editValues in sync
+  // with what the user has typed. Without this, any incidental re-render
+  // (e.g. toast clearing) would clobber unsaved typing.
+  if (r.editing) {
+    const titleInput = document.getElementById('edit-title');
+    const highlightInput = document.getElementById('edit-highlight');
+    const textArea = document.getElementById('edit-text');
+    if (titleInput)
+      titleInput.addEventListener('input', (e) => {
+        if (state.review.editValues) state.review.editValues.title = e.target.value;
+      });
+    if (highlightInput)
+      highlightInput.addEventListener('input', (e) => {
+        if (state.review.editValues) state.review.editValues.highlight = e.target.value;
+      });
+    if (textArea)
+      textArea.addEventListener('input', (e) => {
+        if (state.review.editValues) state.review.editValues.text = e.target.value;
+      });
+  }
 
   // Carousel navigation
   const prev = document.getElementById('carousel-prev');
@@ -1260,6 +1344,8 @@ function freshReviewState() {
     rowNumber: null,
     acting: false,
     rejecting: false,
+    editing: false,
+    editValues: null,
     imageIndex: 0,
   };
 }
@@ -1379,6 +1465,100 @@ function onReject() {
 function onCancelReject() {
   state.review.rejecting = false;
   render();
+}
+
+/* Open the edit form, snapshotting the current data into editValues. The
+   form's three fields are bound to state.review.editValues via input
+   listeners (see renderReview), so unsaved typing survives any incidental
+   re-render. */
+function onEdit() {
+  const d = state.review.data;
+  if (!d) return;
+  state.review.editing = true;
+  state.review.editValues = {
+    title: String(d.title || ''),
+    highlight: String(d.highlight || ''),
+    text: String(d.text || ''),
+  };
+  render();
+}
+
+function onCancelEdit() {
+  if (state.review.acting) return;
+  state.review.editing = false;
+  state.review.editValues = null;
+  render();
+}
+
+async function onSaveEdit() {
+  const r = state.review;
+  if (r.acting || !r.editValues) return;
+
+  const title = r.editValues.title.trim();
+  const highlight = r.editValues.highlight.trim();
+  const text = r.editValues.text.trim();
+
+  // Mirror backend validation client-side for fast feedback. Backend is
+  // still the authority — it returns 400 if these slip through.
+  if (!title) {
+    setToast('Title is required.');
+    return;
+  }
+  if (title.length > 200) {
+    setToast('Title is too long (max 200 characters).');
+    return;
+  }
+  if (!highlight) {
+    setToast('Highlight is required.');
+    return;
+  }
+  if (highlight.length > 500) {
+    setToast('Highlight is too long (max 500 characters).');
+    return;
+  }
+  if (text.length < 10) {
+    setToast('Body text must be at least 10 characters.');
+    return;
+  }
+  if (text.length > 1000) {
+    setToast('Body text is too long (max 1000 characters).');
+    return;
+  }
+
+  state.review.acting = true;
+  render();
+
+  try {
+    const resp = await fetch(`${API}/admin/edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pin: state.user.pin,
+        destination: r.destination,
+        row_number: r.rowNumber,
+        title,
+        highlight,
+        text,
+      }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      state.review.acting = false;
+      setToast(errorMessageFor(data.error, resp.status) || 'Save failed.');
+      render();
+      return;
+    }
+    setToast('Changes saved.');
+    state.review.editing = false;
+    state.review.editValues = null;
+    state.review.acting = false;
+    // Refetch so the read-only view shows the freshly-saved values
+    fetchReviewData();
+  } catch (err) {
+    state.review.acting = false;
+    setToast('Could not reach the server.');
+    render();
+  }
 }
 
 async function onConfirmReject(e) {

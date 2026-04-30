@@ -863,6 +863,43 @@ select {
   flex: 1;
   width: auto;
 }
+.review-footer--three .btn {
+  /* Three buttons share the row evenly; works on phone widths down to ~320px */
+  flex: 1;
+  font-size: 14px;
+  padding: 12px 8px;
+}
+
+/* ---- Admin edit form (inline in review screen) ---- */
+.review-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.review-edit__input,
+.review-edit__textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 16px;
+  padding: 12px 14px;
+  border: 1.5px solid rgba(45, 27, 14, 0.18);
+  border-radius: var(--radius);
+  background: white;
+  color: var(--charcoal);
+  appearance: none;
+  -webkit-appearance: none;
+}
+.review-edit__textarea {
+  min-height: 200px;
+  resize: vertical;
+  line-height: 1.5;
+}
+.review-edit__input:focus,
+.review-edit__textarea:focus {
+  outline: 2px solid var(--terracotta);
+  outline-offset: 1px;
+  border-color: var(--terracotta);
+}
 
 /* Reject form replaces the footer when admin taps Reject */
 .reject-form {
