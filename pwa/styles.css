@@ -426,6 +426,106 @@ select {
   margin: 12px 0;
 }
 
+/* ---- Preview screen (submitter's pre-submit review) ---- */
+.preview-card {
+  background: white;
+  border-radius: var(--radius);
+  border: 1px solid rgba(45, 27, 14, 0.1);
+  overflow: hidden;
+  margin: 0 0 16px;
+}
+.preview-card__header {
+  padding: 18px 20px 12px;
+  background: var(--cream-light);
+  border-bottom: 1px solid rgba(45, 27, 14, 0.08);
+}
+.preview-card__title {
+  margin: 0 0 6px;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--charcoal);
+  line-height: 1.2;
+}
+.preview-card__highlight {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--terracotta-dark);
+  font-style: italic;
+}
+.preview-card__placeholder {
+  color: var(--charcoal-soft);
+  font-weight: 400;
+  font-style: italic;
+}
+.preview-card__body {
+  padding: 18px 20px;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--charcoal);
+}
+.preview-card__body p {
+  margin: 0 0 12px;
+}
+.preview-card__body p:last-child {
+  margin-bottom: 0;
+}
+.preview-card__meta {
+  padding: 14px 20px;
+  background: var(--cream-light);
+  border-top: 1px solid rgba(45, 27, 14, 0.08);
+  font-size: 13px;
+  color: var(--charcoal-soft);
+}
+.preview-card__meta strong {
+  color: var(--charcoal);
+}
+
+.preview-photos {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px 6px;
+  background: white;
+}
+.preview-photo {
+  margin: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--cream-light);
+  border: 1px solid rgba(45, 27, 14, 0.08);
+}
+.preview-photo img {
+  width: 100%;
+  height: auto;
+  max-height: 320px;
+  object-fit: cover;
+  display: block;
+}
+.preview-photo figcaption {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--charcoal-soft);
+  background: var(--cream-light);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.preview-photo--banner figcaption {
+  background: var(--terracotta);
+  color: white;
+}
+
+.preview-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+.preview-actions .btn {
+  flex: 1;
+  width: auto;
+}
+
 /* ---- Submitting screen ---- */
 .progress {
   display: flex;

@@ -6,6 +6,7 @@ Phone-first Progressive Web App. Plain HTML + vanilla JS + CSS — no framework,
 
 - **Sign-in screen** — PIN entry, calls `POST /auth`, persists `pin/name/email/role` to localStorage.
 - **Submit screen** — destination dropdown (General default), story text with live char counter (10–1000) **plus an in-place Dictate button** that captures speech via the Web Speech API (en-AU; works on iOS Safari and Android Chrome via the system's built-in speech engine), optional title and highlight, photo picker (multiple, camera or library — both available on phone via the native chooser), per-photo remove (✕) and reorder (◀ ▶) controls, banner-framing tip, photo previews labelled Banner / Photo 2 / Photo 3 in selection order. First photo is the banner.
+- **Preview screen** — read-only summary of the in-progress submission shown after the submitter taps Preview on the form. Photos rendered at full width with Banner / Photo 2 captions, body text as paragraphs, title and highlight from the form (or italic placeholders if blank, indicating the skill will auto-generate), destination footer. Two actions: Edit (back to the form, all values preserved) or Submit (proceeds to the upload pipeline).
 - **Submitting screen** — "Resizing photos…" then "Uploading your story…", success message, retry on failure.
 - **Sign-out** — clears localStorage and returns to sign-in.
 - **My Recent Submissions screen** (item 6):

@@ -168,6 +168,9 @@ function render() {
     case 'submit':
       renderSubmit();
       break;
+    case 'preview':
+      renderPreview();
+      break;
     case 'submitting':
       renderSubmitting();
       break;
@@ -384,7 +387,7 @@ function renderSubmit() {
       <div id="submit-error"></div>
 
       <button id="submit-btn" class="btn" type="submit"${canSubmit ? '' : ' disabled'}>
-        Submit story
+        Preview
       </button>
     </form>
 
@@ -415,7 +418,7 @@ function renderSubmit() {
   });
   document.getElementById('photos').addEventListener('change', onPhotosPicked);
   document.getElementById('photo-grid').addEventListener('click', onPhotoControl);
-  document.getElementById('submit-form').addEventListener('submit', onSubmit);
+  document.getElementById('submit-form').addEventListener('submit', onPreview);
   const micBtn = document.getElementById('mic-btn');
   if (micBtn) micBtn.addEventListener('click', toggleDictation);
   document.getElementById('view-recent-btn').addEventListener('click', () => {
@@ -724,8 +727,26 @@ function onSignOut() {
   render();
 }
 
-async function onSubmit(e) {
+// Form-submit handler from the Submit screen. Validates and transitions
+// to the preview screen instead of starting the upload directly. Submitter
+// reviews on the preview screen, then taps Submit there to actually upload.
+function onPreview(e) {
   e.preventDefault();
+  if (!state.user) return;
+  const f = state.form;
+  if (f.text.length < TEXT_MIN || f.text.length > TEXT_MAX || f.files.length < 1) return;
+  state.submitError = null;
+  state.screen = 'preview';
+  render();
+}
+
+// Triggered from the preview screen's Submit button. Confirms intent and
+// runs the actual upload pipeline.
+async function confirmSubmit() {
+  await performSubmit();
+}
+
+async function performSubmit() {
   if (!state.user) return;
   const f = state.form;
   if (f.text.length < TEXT_MIN || f.text.length > TEXT_MAX || f.files.length < 1) return;
@@ -783,6 +804,95 @@ async function onSubmit(e) {
     state.screen = 'submit';
     render();
   }
+}
+
+/* ---- Screen: preview before submit ----
+   Read-only render of what the submitter is about to submit. Lets them
+   check title, highlight, body text, photos, and destination once before
+   committing. Two actions: Edit (back to the form, all values preserved
+   in state.form) or Submit (proceeds with the actual upload pipeline).
+
+   Photos render with object URLs from the local File objects — the same
+   resize/EXIF/strip pipeline still runs at upload time, but for the
+   preview we just show the raw images at a comfortable size. */
+function renderPreview() {
+  const u = state.user;
+  const f = state.form;
+
+  const titleHtml = f.title.trim()
+    ? `<h2 class="preview-card__title">${escapeHtml(f.title.trim())}</h2>`
+    : `<h2 class="preview-card__title preview-card__placeholder">(Title will be auto-generated)</h2>`;
+
+  const highlightHtml = f.highlight.trim()
+    ? `<p class="preview-card__highlight">${escapeHtml(f.highlight.trim())}</p>`
+    : `<p class="preview-card__highlight preview-card__placeholder">(Highlight will be auto-generated)</p>`;
+
+  const photosHtml = f.files.length
+    ? `<div class="preview-photos">
+        ${f.files
+          .map((file, i) => {
+            const url = URL.createObjectURL(file);
+            const label = i === 0 ? 'Banner' : `Photo ${i + 1}`;
+            const cls = i === 0 ? 'preview-photo preview-photo--banner' : 'preview-photo';
+            return `
+              <figure class="${cls}">
+                <img src="${url}" alt="${escapeAttr(label)}" />
+                <figcaption>${label}</figcaption>
+              </figure>`;
+          })
+          .join('')}
+      </div>`
+    : '';
+
+  // Render body as paragraphs split on blank lines, mirroring how the
+  // skill will produce the final ContentDescription.
+  const bodyParas = String(f.text || '')
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const bodyHtml = bodyParas.length
+    ? bodyParas.map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`).join('')
+    : '<p><em>(empty)</em></p>';
+
+  root.innerHTML = `
+    ${toastHtml()}
+    <div class="topbar">
+      <button class="topbar__back" type="button" id="back-to-edit-btn">← Back to edit</button>
+    </div>
+    <h1>Preview</h1>
+    <p class="lead">
+      This is what you're about to submit. Tap <strong>Submit</strong> when you're
+      happy, or <strong>Edit</strong> to change anything before posting.
+    </p>
+
+    <article class="preview-card">
+      <header class="preview-card__header">
+        ${titleHtml}
+        ${highlightHtml}
+      </header>
+      ${photosHtml}
+      <div class="preview-card__body">
+        ${bodyHtml}
+      </div>
+      <div class="preview-card__meta">
+        <strong>Destination:</strong> ${escapeHtml(f.destination)}
+      </div>
+    </article>
+
+    <div class="preview-actions">
+      <button class="btn btn--secondary" type="button" id="back-edit-btn">Edit</button>
+      <button class="btn" type="button" id="confirm-submit-btn">Submit</button>
+    </div>
+  `;
+
+  document.getElementById('back-to-edit-btn').addEventListener('click', backToEdit);
+  document.getElementById('back-edit-btn').addEventListener('click', backToEdit);
+  document.getElementById('confirm-submit-btn').addEventListener('click', confirmSubmit);
+}
+
+function backToEdit() {
+  state.screen = 'submit';
+  render();
 }
 
 /* ---- Screen: submitting / done ---- */
