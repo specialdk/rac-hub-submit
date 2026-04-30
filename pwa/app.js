@@ -364,18 +364,37 @@ function renderSubmit() {
 
       <div class="field">
         <span class="field__label">Photos</span>
-        <label class="photo-picker${form.files.length >= MAX_PHOTOS ? ' photo-picker--disabled' : ''}" for="photos">
+        <div class="photo-picker${form.files.length >= MAX_PHOTOS ? ' photo-picker--disabled' : ''}">
           <div class="photo-picker__icon">📷</div>
-          <div><strong>Tap to add photos</strong></div>
-          <span class="photo-picker__hint">First photo is the banner. Camera or library.</span>
-          <input
-            id="photos"
-            type="file"
-            accept="image/*"
-            multiple
-            ${form.files.length >= MAX_PHOTOS ? 'disabled' : ''}
-          />
-        </label>
+          <div><strong>Add photos</strong></div>
+          <span class="photo-picker__hint">First photo is the banner.</span>
+          <div class="photo-picker__buttons">
+            <label class="photo-picker__btn">
+              <span class="photo-picker__btn-icon" aria-hidden="true">📸</span>
+              <span>Take photo</span>
+              <input
+                id="photos-camera"
+                class="photo-picker__input"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                ${form.files.length >= MAX_PHOTOS ? 'disabled' : ''}
+              />
+            </label>
+            <label class="photo-picker__btn">
+              <span class="photo-picker__btn-icon" aria-hidden="true">🖼️</span>
+              <span>From library</span>
+              <input
+                id="photos-library"
+                class="photo-picker__input"
+                type="file"
+                accept="image/*"
+                multiple
+                ${form.files.length >= MAX_PHOTOS ? 'disabled' : ''}
+              />
+            </label>
+          </div>
+        </div>
         <p class="photo-picker__tip">
           Maximum ${MAX_PHOTOS} photos per story. For best banner display, frame the most important part of your first photo near the centre.
         </p>
@@ -416,7 +435,9 @@ function renderSubmit() {
   document.getElementById('highlight').addEventListener('input', (e) => {
     state.form.highlight = e.target.value;
   });
-  document.getElementById('photos').addEventListener('change', onPhotosPicked);
+  document.querySelectorAll('.photo-picker__input').forEach((input) => {
+    input.addEventListener('change', onPhotosPicked);
+  });
   document.getElementById('photo-grid').addEventListener('click', onPhotoControl);
   document.getElementById('submit-form').addEventListener('submit', onPreview);
   const micBtn = document.getElementById('mic-btn');
@@ -511,11 +532,13 @@ function onPhotoControl(e) {
 // of the form (full re-renders would clobber textarea cursor state).
 function refreshPickerCap() {
   const picker = document.querySelector('.photo-picker');
-  const input = document.getElementById('photos');
-  if (!picker || !input) return;
+  const inputs = document.querySelectorAll('.photo-picker__input');
+  if (!picker || !inputs.length) return;
   const atCap = state.form.files.length >= MAX_PHOTOS;
   picker.classList.toggle('photo-picker--disabled', atCap);
-  input.disabled = atCap;
+  inputs.forEach((input) => {
+    input.disabled = atCap;
+  });
 }
 
 /* ---- Speech-to-text dictation -------------------------------------------

@@ -313,8 +313,61 @@ select {
   color: var(--charcoal-soft);
   margin-top: 4px;
 }
-.photo-picker input[type='file'] {
+.photo-picker__input {
   display: none;
+}
+
+/* Two explicit buttons inside the picker box: Take photo (forces camera
+   via capture="environment") and From library (multiple, no capture).
+   Without this split, removing capture leaves browsers to pick a default
+   chooser — and each platform picks differently (iOS shows camera-only,
+   Samsung shows library-only, Huawei shows both). Two buttons sidesteps
+   the fragmentation by giving each phone the input it interprets
+   unambiguously. */
+.photo-picker__buttons {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+}
+.photo-picker__btn {
+  flex: 1;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 8px;
+  background: white;
+  border: 1.5px solid var(--terracotta);
+  border-radius: var(--radius);
+  color: var(--terracotta);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+  min-height: 64px;
+  user-select: none;
+}
+.photo-picker__btn:hover {
+  background: rgba(196, 101, 26, 0.05);
+}
+.photo-picker__btn:active {
+  background: rgba(196, 101, 26, 0.12);
+}
+.photo-picker__btn-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+.photo-picker--disabled .photo-picker__btn {
+  opacity: 0.5;
+  cursor: not-allowed;
+  border-color: rgba(45, 27, 14, 0.15);
+  color: var(--charcoal-soft);
+  background: white;
+}
+.photo-picker--disabled .photo-picker__btn:hover {
+  background: white;
 }
 
 .photo-grid {
