@@ -344,7 +344,13 @@ router.post('/skill/process', async (req, res) => {
         title: cleanTitle,
         description: cleanedDescription,
         highlight: cleanHighlight,
-        finalUrl: bodyUrls.join(';'),
+        // FinalURL is the full image list — banner first, then body images,
+        // joined with ';'. LeaderPhoto is the banner URL alone, used by the
+        // Intranet to identify which image is "the lead". The contract
+        // originally said FinalURL excludes the banner for Modal Stories,
+        // but the live Intranet's modal needs at least one URL in FinalURL
+        // to render anything. Same shape as Manager destinations now.
+        finalUrl: [bannerUrl, ...bodyUrls].join(';'),
         leaderPhoto: bannerUrl,
         photoTitles: '',
         submittedBy,
