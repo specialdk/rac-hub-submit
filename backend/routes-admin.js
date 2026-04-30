@@ -259,6 +259,136 @@ async function flipStatus({ sheets, sheetId, destination, rowNumber, newStatus, 
   return { ok: true, updates: updates.length };
 }
 
+/* Update title / highlight / body text for a Waiting Approval row.
+   For Manager destinations, writes to columns C/D/E in the destination tab.
+   For General, also mirrors title and highlight to the linked Hero Content
+   row's columns B/C (Title and Subtitle), found by SlideNumber match.
+   Status is NOT changed — admin still has to Approve as a separate action. */
+async function applyEdits({ sheets, sheetId, destination, rowNumber, title, highlight, text }) {
+  const t = getTabLayout(destination);
+  if (!t) return { ok: false, status: 400, error: 'INVALID_DESTINATION' };
+  if (!Number.isInteger(rowNumber) || rowNumber < 2) {
+    return { ok: false, status: 400, error: 'INVALID_ROW' };
+  }
+
+  const ranges = [`'${t.tabName}'!${rowNumber}:${rowNumber}`];
+  if (destination === 'General') {
+    ranges.push(`'${HERO_TAB}'!A:A`);
+  }
+
+  const batch = await sheets.spreadsheets.values.batchGet({
+    spreadsheetId: sheetId,
+    ranges,
+  });
+
+  const targetRow = batch.data.valueRanges?.[0]?.values?.[0] || [];
+  if (!targetRow.length) return { ok: false, status: 404, error: 'NOT_FOUND' };
+
+  const currentStatus = String(targetRow[t.layout.status] ?? '').trim();
+  if (currentStatus !== STATUS_WAITING) {
+    // Don't allow editing rows that are already Approved or Archived —
+    // they'd silently mutate live or rejected content.
+    return { ok: false, status: 409, error: 'NOT_PENDING' };
+  }
+
+  // Manager and Modal layouts both place title/description/highlight at
+  // C/D/E (indices 2/3/4) — see admin-helpers.js. Hardcode the letters.
+  const updates = [
+    { range: cellA1(t.tabName, 'C', rowNumber), values: [[title]] },
+    { range: cellA1(t.tabName, 'D', rowNumber), values: [[text]] },
+    { range: cellA1(t.tabName, 'E', rowNumber), values: [[highlight]] },
+  ];
+
+  if (destination === 'General') {
+    const contentNumber = String(targetRow[t.layout.contentNumber] ?? '').trim();
+    const heroACol = batch.data.valueRanges?.[1]?.values || [];
+    const heroRowNumber = findHeroRowByContentNumber(heroACol, contentNumber);
+    if (!heroRowNumber) {
+      return { ok: false, status: 500, error: 'HERO_ROW_NOT_FOUND' };
+    }
+    // Hero Content: Title=B, Subtitle=C (which mirrors the highlight).
+    updates.push(
+      { range: cellA1(HERO_TAB, 'B', heroRowNumber), values: [[title]] },
+      { range: cellA1(HERO_TAB, 'C', heroRowNumber), values: [[highlight]] },
+    );
+  }
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: sheetId,
+    requestBody: {
+      valueInputOption: 'USER_ENTERED',
+      data: updates,
+    },
+  });
+
+  return { ok: true, updates: updates.length };
+}
+
+/* ---- POST /admin/edit ----------------------------------------------------
+   Apply admin edits to a Waiting Approval row's title, highlight, and body
+   text. Hero Content's matching row is updated in lockstep for General
+   submissions. Status stays "Waiting Approval" — admin then chooses to
+   Approve or Reject as a separate step. */
+router.post('/admin/edit', async (req, res) => {
+  try {
+    const sheets = getSheetsClient();
+    const sheetId = ensureSheetIdSet(res);
+    if (!sheetId) return;
+
+    const auth = await requireAdmin(req, sheets, sheetId);
+    if (!auth.ok) {
+      logAdmin('/admin/edit', false, auth.error);
+      return res.status(auth.status).json({ ok: false, error: auth.error });
+    }
+
+    const { destination, row_number, title, highlight, text } = req.body || {};
+    const cleanTitle = typeof title === 'string' ? title.trim() : '';
+    const cleanHighlight = typeof highlight === 'string' ? highlight.trim() : '';
+    const cleanText = typeof text === 'string' ? text.trim() : '';
+
+    if (!cleanTitle) {
+      return res.status(400).json({ ok: false, error: 'INVALID_TITLE' });
+    }
+    if (cleanTitle.length > 200) {
+      return res.status(400).json({ ok: false, error: 'TITLE_TOO_LONG' });
+    }
+    if (!cleanHighlight) {
+      return res.status(400).json({ ok: false, error: 'INVALID_HIGHLIGHT' });
+    }
+    if (cleanHighlight.length > 500) {
+      return res.status(400).json({ ok: false, error: 'HIGHLIGHT_TOO_LONG' });
+    }
+    if (cleanText.length < 10 || cleanText.length > 1000) {
+      return res.status(400).json({ ok: false, error: 'TEXT_LENGTH' });
+    }
+
+    const result = await applyEdits({
+      sheets,
+      sheetId,
+      destination,
+      rowNumber: parseInt(row_number, 10),
+      title: cleanTitle,
+      highlight: cleanHighlight,
+      text: cleanText,
+    });
+
+    if (!result.ok) {
+      logAdmin('/admin/edit', false, result.error, { destination, row_number });
+      return res.status(result.status).json({ ok: false, error: result.error });
+    }
+
+    logAdmin('/admin/edit', true, 'OK', {
+      destination,
+      row_number,
+      cells: result.updates,
+    });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('admin/edit error:', err.message);
+    return res.status(500).json({ ok: false, error: 'INTERNAL_ERROR' });
+  }
+});
+
 /* ---- POST /admin/approve ------------------------------------------------- */
 router.post('/admin/approve', async (req, res) => {
   try {

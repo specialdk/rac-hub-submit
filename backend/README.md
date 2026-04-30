@@ -313,6 +313,25 @@ curl -X POST http://localhost:3000/admin/approve \
   -d '{"pin":"YOUR_PIN","destination":"General","row_number":5}'
 ```
 
+#### `POST /admin/edit`
+
+Body: `{ "pin": "...", "destination": "...", "row_number": 5, "title": "...", "highlight": "...", "text": "..." }`
+
+Updates the `ContentTitle` (col C), `ContentDescription` (col D), and `ContentHighlights` (col E) cells of a `Waiting Approval` row. **For General**, also mirrors title and highlight to the linked Hero Content row's columns B and C (Title and Subtitle), found via `SlideNumber == ContentNumber`.
+
+`Status` is **not** changed — admin separately calls `/admin/approve` after reviewing the edited content. Editing a row that's already `Approved` or `Archived` returns 409 `NOT_PENDING`.
+
+Validation:
+- `title`: non-empty, ≤200 chars
+- `highlight`: non-empty, ≤500 chars
+- `text`: 10–1000 chars (matches `/submit`'s body-text rules)
+
+```bash
+curl -X POST http://localhost:3000/admin/edit \
+  -H "Content-Type: application/json" \
+  -d '{"pin":"YOUR_PIN","destination":"General","row_number":2,"title":"Tripod wins","highlight":"One short hook","text":"The body text after admin edits."}'
+```
+
 #### `POST /admin/reject`
 
 Body: `{ "pin": "...", "destination": "...", "row_number": 5, "reason": "Optional rejection reason" }`
