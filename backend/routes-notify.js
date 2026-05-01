@@ -132,7 +132,21 @@ async function pushNewPendingToAdmins({ destination, rowNumber, title, submitted
       range: USERS_RANGE,
     });
     const adminNames = findAdminNames(usersResp.data.values || []);
-    if (adminNames.length === 0) return;
+    console.log(JSON.stringify({
+      event: 'push.trigger',
+      source: '/admin/notify',
+      adminNames,
+      destination,
+      row_number: rowNumber,
+    }));
+    if (adminNames.length === 0) {
+      console.log(JSON.stringify({
+        event: 'push.skip',
+        source: '/admin/notify',
+        reason: 'no_admins_found',
+      }));
+      return;
+    }
     await sendPushToUsers(adminNames, {
       title: 'New story to review',
       body: `"${title}" by ${submittedBy}`,

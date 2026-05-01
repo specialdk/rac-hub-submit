@@ -218,13 +218,44 @@ export async function sendPushToSubscriptions(subscriptions, payload) {
   return { sent, failed, pruned };
 }
 
-// Convenience: send to all of a user's devices.
+// Convenience: send to all of a user's devices. Logs a single structured
+// line per call so we can see exactly what fired and what happened to it
+// in Railway logs without scattering console.logs across the call sites.
 export async function sendPushToUser(userName, payload) {
   try {
     const subs = await loadSubscriptionsForUser(userName);
-    return await sendPushToSubscriptions(subs, payload);
+    if (subs.length === 0) {
+      console.log(JSON.stringify({
+        event: 'push.send',
+        target: userName,
+        targets: 1,
+        subs: 0,
+        sent: 0,
+        failed: 0,
+        pruned: 0,
+        note: 'no_subscriptions',
+        title: payload?.title || '',
+      }));
+      return { sent: 0, failed: 0, pruned: 0 };
+    }
+    const result = await sendPushToSubscriptions(subs, payload);
+    console.log(JSON.stringify({
+      event: 'push.send',
+      target: userName,
+      targets: 1,
+      subs: subs.length,
+      ...result,
+      title: payload?.title || '',
+    }));
+    return result;
   } catch (err) {
     console.error('sendPushToUser error:', err.message);
+    console.log(JSON.stringify({
+      event: 'push.send',
+      target: userName,
+      targets: 1,
+      error: err.message,
+    }));
     return { sent: 0, failed: 0, pruned: 0 };
   }
 }
@@ -233,9 +264,37 @@ export async function sendPushToUser(userName, payload) {
 export async function sendPushToUsers(userNames, payload) {
   try {
     const subs = await loadSubscriptionsForUsers(userNames);
-    return await sendPushToSubscriptions(subs, payload);
+    if (subs.length === 0) {
+      console.log(JSON.stringify({
+        event: 'push.send',
+        targets: userNames.length,
+        targetNames: userNames,
+        subs: 0,
+        sent: 0,
+        failed: 0,
+        pruned: 0,
+        note: 'no_subscriptions',
+        title: payload?.title || '',
+      }));
+      return { sent: 0, failed: 0, pruned: 0 };
+    }
+    const result = await sendPushToSubscriptions(subs, payload);
+    console.log(JSON.stringify({
+      event: 'push.send',
+      targets: userNames.length,
+      targetNames: userNames,
+      subs: subs.length,
+      ...result,
+      title: payload?.title || '',
+    }));
+    return result;
   } catch (err) {
     console.error('sendPushToUsers error:', err.message);
+    console.log(JSON.stringify({
+      event: 'push.send',
+      targets: userNames?.length || 0,
+      error: err.message,
+    }));
     return { sent: 0, failed: 0, pruned: 0 };
   }
 }

@@ -430,6 +430,13 @@ router.post('/admin/approve', async (req, res) => {
     // response to the admin.
     if (result.submittedBy) {
       const rowNum = parseInt(row_number, 10);
+      console.log(JSON.stringify({
+        event: 'push.trigger',
+        source: '/admin/approve',
+        submittedBy: result.submittedBy,
+        destination,
+        row_number: rowNum,
+      }));
       sendPushToUser(result.submittedBy, {
         title: 'Story approved 🎉',
         body: result.title
@@ -438,6 +445,14 @@ router.post('/admin/approve', async (req, res) => {
         url: `/?my-story=${encodeURIComponent(destination)}&row=${rowNum}`,
         tag: `story-approved-${destination}-${rowNum}`,
       });
+    } else {
+      console.log(JSON.stringify({
+        event: 'push.skip',
+        source: '/admin/approve',
+        reason: 'empty_submittedBy',
+        destination,
+        row_number,
+      }));
     }
 
     logAdmin('/admin/approve', true, 'OK', { destination, row_number, cells: result.updates });
@@ -482,6 +497,14 @@ router.post('/admin/reject', async (req, res) => {
     // conversation.
     if (result.submittedBy) {
       const rowNum = parseInt(row_number, 10);
+      console.log(JSON.stringify({
+        event: 'push.trigger',
+        source: '/admin/reject',
+        submittedBy: result.submittedBy,
+        destination,
+        row_number: rowNum,
+        hasReason: !!cleanReason,
+      }));
       sendPushToUser(result.submittedBy, {
         title: 'Story not published',
         body: result.title
