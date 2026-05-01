@@ -83,6 +83,8 @@ const state = {
     error: null,
     items: null, // null = not yet loaded; [] = loaded but empty
     loadedAt: null,
+    limit: 10, // current page size (10 default, 30 when "Show older" tapped)
+    total: null, // total count returned by backend, used to show/hide Show older
   },
   // Admin-only state slices (only populated when state.user.role === 'Admin')
   adminQueue: {
@@ -742,7 +744,7 @@ function onSignOut() {
   state.form = { destination: 'General', text: '', title: '', highlight: '', files: [] };
   state.signinError = null;
   state.submitError = null;
-  state.recent = { loading: false, error: null, items: null, loadedAt: null };
+  state.recent = { loading: false, error: null, items: null, loadedAt: null, limit: 10, total: null };
   state.adminQueue = { loading: false, error: null, items: null, count: 0 };
   state.review = freshReviewState();
   state.toast = null;
@@ -932,10 +934,25 @@ function renderSubmitting() {
           <strong>Thanks ${escapeHtml(u.name || 'there')}!</strong><br>
           Your story has been submitted and will appear on the Hub once approved.
         </div>
-        <button class="btn" id="back-btn" type="button">Submit another story</button>
+        <p class="lead lead--small">
+          It usually takes around 15 minutes for your story to appear in
+          <strong>My Stories</strong> as <em>Awaiting review</em>.
+        </p>
+        <button class="btn" id="view-stories-btn" type="button">View My Stories</button>
+        <button class="btn btn--secondary" id="back-btn" type="button">Submit another story</button>
       </div>
     `;
     document.getElementById('signout-btn').addEventListener('click', onSignOut);
+    document.getElementById('view-stories-btn').addEventListener('click', () => {
+      state.screen = 'recent';
+      state.submitProgress = null;
+      // Force a fresh fetch — the just-submitted story usually isn't visible
+      // for ~15 minutes (Task Scheduler cadence), but the user sees their
+      // existing stories immediately and can pull-to-refresh later.
+      state.recent = { loading: false, error: null, items: null, loadedAt: null, limit: 10, total: null };
+      render();
+      fetchRecentSubmissions();
+    });
     document.getElementById('back-btn').addEventListener('click', () => {
       state.screen = 'submit';
       state.submitProgress = null;
@@ -991,6 +1008,51 @@ function errorMessageFor(code, status) {
 }
 
 /* ---- Screen: my recent submissions ---- */
+// Translate the canonical backend status into submitter-friendly copy.
+// CSS class still keys off the canonical value (existing colour rules
+// stay correct — green for approved, ochre for waiting, grey for archived).
+function friendlyStatus(rawStatus) {
+  const s = String(rawStatus || '').trim();
+  if (s === 'Approved') return 'Live on the Hub';
+  if (s === 'Waiting Approval') return 'Awaiting review';
+  if (s === 'Archived') return 'Not published';
+  return s || 'Unknown';
+}
+
+function statusSlug(rawStatus) {
+  return String(rawStatus || 'unknown')
+    .toLowerCase()
+    .replace(/[^a-z]+/g, '-');
+}
+
+// Banner shown at the top of the review-body in self-mode for non-Approved
+// stories. Approved stories render without a banner — the submitter is
+// looking at exactly what's live on the Hub. Archived stories surface
+// the AdminNote when the admin left one, so submitters get rejection
+// feedback in the PWA rather than only via email.
+function renderSelfBanner(status, adminNote) {
+  const s = String(status || '').trim();
+  if (s === 'Waiting Approval') {
+    return `
+      <div class="review-self-banner review-self-banner--waiting">
+        <p class="review-self-banner__heading">Awaiting review</p>
+        <p class="review-self-banner__note">An admin checks new stories before they go live on the Hub. You'll get an email once it's approved or if any changes are needed.</p>
+      </div>`;
+  }
+  if (s === 'Archived') {
+    const note = String(adminNote || '').trim();
+    const noteHtml = note
+      ? escapeHtml(note)
+      : 'This story isn\u2019t visible on the Hub. Talk to your manager if you have questions.';
+    return `
+      <div class="review-self-banner review-self-banner--archived">
+        <p class="review-self-banner__heading">Not published</p>
+        <p class="review-self-banner__note">${noteHtml}</p>
+      </div>`;
+  }
+  return '';
+}
+
 function renderRecent() {
   const u = state.user;
   const r = state.recent;
@@ -1007,7 +1069,16 @@ function renderRecent() {
   } else if (!r.items || r.items.length === 0) {
     body = `<p class="lead">No submissions yet — submit your first story above.</p>`;
   } else {
-    body = `<ul class="recent-list">${r.items.map(renderRecentItem).join('')}</ul>`;
+    const list = `<ul class="recent-list">${r.items.map(renderRecentItem).join('')}</ul>`;
+    // Show "Show older" only if backend reported more rows than we currently
+    // show AND we're still on the default 10. Once expanded to 30, no
+    // further pagination — that's enough for any plausible RAC scale.
+    const moreAvailable =
+      r.limit < 30 && Number.isFinite(r.total) && r.total > r.items.length;
+    const showOlder = moreAvailable
+      ? `<button class="btn btn--secondary show-older-btn" type="button" id="show-older-btn">Show older stories</button>`
+      : '';
+    body = `${list}${showOlder}`;
   }
 
   root.innerHTML = `
@@ -1018,8 +1089,8 @@ function renderRecent() {
       </button>
     </div>
     <div class="pull-indicator" id="pull-indicator"><div class="pull-indicator__inner">Pull down to refresh</div></div>
-    <h1>My Recent Submissions</h1>
-    <p class="lead">Your last 10 stories.</p>
+    <h1>My Stories</h1>
+    <p class="lead">Tap a story to see how it looks.</p>
     ${body}
   `;
 
@@ -1030,19 +1101,52 @@ function renderRecent() {
   document.getElementById('refresh-btn').addEventListener('click', () => {
     if (!r.loading) fetchRecentSubmissions();
   });
+  const showOlderBtn = document.getElementById('show-older-btn');
+  if (showOlderBtn) {
+    showOlderBtn.addEventListener('click', () => {
+      state.recent.limit = 30;
+      fetchRecentSubmissions();
+    });
+  }
+
+  // Tap-through: each list item opens the self-view detail render.
+  // Event delegation on the list — no per-item listener.
+  const list = document.querySelector('.recent-list');
+  if (list) {
+    list.addEventListener('click', (e) => {
+      const li = e.target.closest('.recent-item');
+      if (!li) return;
+      const destination = li.dataset.destination;
+      const rowNumber = parseInt(li.dataset.row, 10);
+      if (destination && Number.isInteger(rowNumber)) {
+        openMyStory(destination, rowNumber);
+      }
+    });
+  }
 }
 
 function renderRecentItem(item) {
-  const status = item.status || 'Unknown';
-  const statusClass = `status status--${status.toLowerCase().replace(/[^a-z]+/g, '-')}`;
+  const slug = statusSlug(item.status);
+  const friendly = friendlyStatus(item.status);
+  const banner = item.banner_url
+    ? `<img class="recent-item__thumb" src="${escapeAttr(item.banner_url)}" alt="" loading="lazy" />`
+    : `<div class="recent-item__thumb recent-item__thumb--placeholder" aria-hidden="true">📰</div>`;
   return `
-    <li class="recent-item">
-      <div class="recent-item__row">
-        <span class="recent-item__title">${escapeHtml(item.title || '(untitled)')}</span>
-        <span class="${statusClass}">${escapeHtml(status)}</span>
-      </div>
-      <div class="recent-item__meta">
-        ${escapeHtml(item.destination || '')} · ${escapeHtml(item.date || '')}
+    <li class="recent-item recent-item--tappable"
+        data-destination="${escapeAttr(item.destination)}"
+        data-row="${item.row_number}"
+        role="button"
+        tabindex="0"
+        aria-label="Open ${escapeAttr(item.title || 'untitled story')}">
+      ${banner}
+      <div class="recent-item__content">
+        <div class="recent-item__row">
+          <span class="recent-item__title">${escapeHtml(item.title || '(untitled)')}</span>
+          <span class="status status--${slug}">${escapeHtml(friendly)}</span>
+        </div>
+        <div class="recent-item__meta">
+          ${escapeHtml(item.destination || '')} · ${escapeHtml(item.date || '')}
+        </div>
       </div>
     </li>
   `;
@@ -1055,7 +1159,7 @@ async function fetchRecentSubmissions() {
   if (state.screen === 'recent') render();
 
   try {
-    const url = `${API}/my-submissions?pin=${encodeURIComponent(state.user.pin)}`;
+    const url = `${API}/my-submissions?pin=${encodeURIComponent(state.user.pin)}&limit=${state.recent.limit}`;
     const resp = await fetch(url);
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || !data.ok) {
@@ -1063,6 +1167,7 @@ async function fetchRecentSubmissions() {
       state.recent.items = state.recent.items || [];
     } else {
       state.recent.items = Array.isArray(data.submissions) ? data.submissions : [];
+      state.recent.total = Number.isFinite(data.total) ? data.total : state.recent.items.length;
       state.recent.loadedAt = Date.now();
     }
   } catch (err) {
@@ -1071,6 +1176,40 @@ async function fetchRecentSubmissions() {
   } finally {
     state.recent.loading = false;
     if (state.screen === 'recent') render();
+  }
+}
+
+// Opens the review screen in self-view mode for one of the submitter's own
+// stories. Reuses the admin Review Detail render with mode='self', which
+// hides the Reject/Edit/Approve footer and surfaces status-appropriate
+// banners (Awaiting review note, AdminNote on Not published).
+async function openMyStory(destination, rowNumber) {
+  state.review = freshReviewState();
+  state.review.destination = destination;
+  state.review.rowNumber = rowNumber;
+  state.review.mode = 'self';
+  state.review.loading = true;
+  state.screen = 'review';
+  render();
+
+  try {
+    const url =
+      `${API}/my-submission?pin=${encodeURIComponent(state.user.pin)}` +
+      `&destination=${encodeURIComponent(destination)}` +
+      `&row=${rowNumber}`;
+    const resp = await fetch(url);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      state.review.errorCode = data.error || 'UNKNOWN';
+      state.review.error = errorMessageFor(data.error, resp.status);
+    } else {
+      state.review.data = data.submission;
+    }
+  } catch (err) {
+    state.review.error = 'Could not reach the server.';
+  } finally {
+    state.review.loading = false;
+    if (state.screen === 'review') render();
   }
 }
 
@@ -1235,9 +1374,15 @@ function renderReview() {
   }
 
   const d = r.data;
+  const isSelf = r.mode === 'self';
   const images = reviewImages(d);
   const idx = Math.max(0, Math.min(r.imageIndex, images.length - 1));
   const datePill = formatDatePill(d.submitted_date);
+
+  // Self-view banner: only shown when the submitter is looking at their
+  // own story AND the status is not Approved. Approved stories appear
+  // exactly as they do on the Hub — no callout needed.
+  const selfBannerHtml = isSelf ? renderSelfBanner(d.status, d.admin_note) : '';
 
   const carouselHtml = images.length
     ? `
@@ -1273,7 +1418,8 @@ function renderReview() {
   // Body content swaps when editing — form replaces the read-only preview
   // for title/highlight/text. Carousel + meta card stay (admin can see
   // banner while editing; meta is auto and not editable).
-  const bodyContentHtml = r.editing
+  // Editing is admin-only; in self-mode we always render the read-only path.
+  const bodyContentHtml = r.editing && !isSelf
     ? `
       <form class="review-edit" id="edit-form" novalidate>
         <div class="field">
@@ -1319,7 +1465,10 @@ function renderReview() {
         <div><strong>Destination</strong> ${escapeHtml(d.destination || '')}</div>
       </div>`;
 
-  const footerHtml = r.editing
+  // In self-mode the footer is empty — submitters can only view, not act.
+  const footerHtml = isSelf
+    ? ''
+    : r.editing
     ? `
       <div class="review-footer">
         <button class="btn btn--secondary" type="button" id="cancel-edit-btn"${r.acting ? ' disabled' : ''}>
@@ -1373,6 +1522,7 @@ function renderReview() {
         <button type="button" class="review-header__close" id="close-btn" aria-label="Close">✕</button>
       </header>
       <div class="review-body">
+        ${selfBannerHtml}
         ${carouselHtml}
         ${bodyContentHtml}
       </div>
@@ -1443,7 +1593,17 @@ function moveCarousel(delta) {
 }
 
 function closeReview() {
+  // Branch on the mode the review screen was opened in:
+  //   'self'  → submitter came from My Stories; return them there
+  //   'admin' → admin came from the review queue (or notify deep link);
+  //             return them to the queue and refresh it if stale
+  const wasSelf = state.review.mode === 'self';
   state.review = freshReviewState();
+  if (wasSelf) {
+    state.screen = 'recent';
+    render();
+    return;
+  }
   state.screen = 'queue';
   render();
   if (state.adminQueue.items === null && !state.adminQueue.loading) {
@@ -1480,6 +1640,7 @@ function freshReviewState() {
     editing: false,
     editValues: null,
     imageIndex: 0,
+    mode: 'admin', // 'admin' (review queue, full controls) | 'self' (My Stories, view-only)
   };
 }
 
@@ -1778,10 +1939,11 @@ function boot() {
   const u = loadUser();
   state.user = u || null;
 
+  const params = new URLSearchParams(window.location.search);
+
   // Deep link from admin notification email: /?review={destination}&row={n}
   // Honoured only if the user is signed in as Admin. After consuming, the
   // query string is cleared so a refresh doesn't re-trigger it.
-  const params = new URLSearchParams(window.location.search);
   const reviewDest = params.get('review');
   const reviewRow = parseInt(params.get('row'), 10);
 
@@ -1794,6 +1956,23 @@ function boot() {
     render();
     fetchReviewData();
     fetchPendingCount(); // populate badge for when admin returns to submit
+    return;
+  }
+
+  // Deep link to a submitter's own story: /?my-story={destination}&row={n}
+  // Honoured for any signed-in user (non-admins included). The /my-submission
+  // endpoint enforces self-only authorisation server-side, so a user
+  // sharing a link can't open someone else's story. Mirrors the admin
+  // ?review= pattern, including the history.replaceState cleanup.
+  // Forward-compatible with v1.5 push notifications, which will use this
+  // same URL shape to open the submitter back to their story.
+  const myStoryDest = params.get('my-story');
+  const myStoryRow = parseInt(params.get('row'), 10);
+
+  if (u && myStoryDest && Number.isInteger(myStoryRow)) {
+    window.history.replaceState({}, '', window.location.pathname);
+    if (u.role === 'Admin') fetchPendingCount();
+    openMyStory(myStoryDest, myStoryRow);
     return;
   }
 
