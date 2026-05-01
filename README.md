@@ -2,6 +2,8 @@
 
 A staff-facing system that lets RAC staff submit stories to the RAC Intranet from their phones, and lets an admin review and approve them.
 
+> **📘 [Handbook](docs/HANDBOOK.md)** — product overview, system architecture, and standard operating procedures. Start here if you're new to the project or need to operate / troubleshoot it.
+
 ## What's in this repo
 
 - **`pwa/`** — Phone-first Progressive Web App (plain HTML + vanilla JS + CSS). Two roles: `User` (submit only) and `Admin` (submit + review/approve).
@@ -64,4 +66,4 @@ Because each service depends on the other's URL, the deployment is a two-pass da
 
 ## Status
 
-In active development. Build progress tracked per build-order step in commit history.
+v1.5 in production. See [Handbook](docs/HANDBOOK.md) for the current feature surface and how to operate the system.
