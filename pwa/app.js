@@ -154,6 +154,37 @@ function ensurePendingPoll() {
   }, PENDING_POLL_MS);
 }
 
+// Tell the service worker whether this window is currently in a state
+// where a notification-driven navigation would destroy in-progress work.
+// The SW uses this to focus-only (instead of navigating) when a tap lands
+// while the user is mid-review/edit. Cheap to call on every render —
+// the SW just adds/removes from a Set keyed by client id.
+function markBusyToServiceWorker(busy) {
+  if (!('serviceWorker' in navigator)) return;
+  const ctrl = navigator.serviceWorker.controller;
+  if (!ctrl) return;
+  try {
+    ctrl.postMessage({ type: 'pwa.busy', busy: !!busy });
+  } catch {
+    // Posting to a closing/terminated SW can throw; non-fatal.
+  }
+}
+
+function isBusyScreen() {
+  // "Busy" = the user is actively reading or working on a specific
+  // story whose context shouldn't be silently swapped out by a new
+  // notification. Includes admin review (with controls) and the
+  // submitter self-view detail. The Submit form is intentionally NOT
+  // busy — partial form drafts are auto-saved already and a deep link
+  // to a fresh review is the more useful destination.
+  if (state.screen === 'review') {
+    // Only busy once data is loaded — initial loading state is fine to
+    // navigate away from.
+    return state.review.data !== null;
+  }
+  return false;
+}
+
 function render() {
   // Manage admin badge polling lifecycle from the single render() entry point
   // so we don't have to plumb start/stop calls through every navigation handler.
@@ -162,6 +193,10 @@ function render() {
   } else {
     clearPendingPoll();
   }
+
+  // Sync busy state with the service worker every render. Idempotent on
+  // the SW side, so calling on every state change is fine.
+  markBusyToServiceWorker(isBusyScreen());
 
   // Stop dictation if we're navigating off the submit screen — the mic
   // button and textarea are about to disappear, so the recogniser would

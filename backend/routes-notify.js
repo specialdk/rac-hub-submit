@@ -151,7 +151,14 @@ async function pushNewPendingToAdmins({ destination, rowNumber, title, submitted
       title: 'New story to review',
       body: `"${title}" by ${submittedBy}`,
       url: `/?review=${encodeURIComponent(destination)}&row=${rowNumber}`,
-      tag: `pending-${destination}-${rowNumber}`,
+      // Stable tag: each new "pending" push replaces the previous in the
+      // shade rather than stacking. Prevents heads-up clutter when two
+      // submissions land in the same runner cycle, and stops accidental
+      // taps on a freshly-arrived banner from yanking the admin out of
+      // the story they're already reviewing. Tapping the surviving
+      // notification still deep-links to the most recent story; the
+      // queue badge surfaces any others.
+      tag: 'pending',
     });
   } catch (err) {
     console.error('pushNewPendingToAdmins error:', err.message);
