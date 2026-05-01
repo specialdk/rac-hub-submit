@@ -106,6 +106,18 @@ const state = {
     editValues: null, // { title, highlight, text } — only while editing
   },
   toast: null, // transient banner shown at the top of any screen
+  push: {
+    // Feature support is checked once on boot. `null` = not yet checked.
+    supported: null,
+    // 'default' | 'granted' | 'denied' — mirrors Notification.permission.
+    permission: null,
+    // True while a subscribe/unsubscribe request is in flight.
+    busy: false,
+    // True if the browser currently has an active push subscription.
+    subscribed: false,
+    // The current subscription's endpoint, kept for unsubscribe calls.
+    endpoint: null,
+  },
 };
 
 let toastTimer = null;
@@ -265,6 +277,11 @@ async function onSignInSubmit(e) {
     state.screen = 'submit';
     render();
     if (user.role === 'Admin') fetchPendingCount();
+    // Probe push state in the background so the toggle is ready when the
+    // user navigates to My Stories or the queue.
+    refreshPushState().then(() => {
+      if (state.screen === 'recent' || state.screen === 'queue') render();
+    });
   } catch (err) {
     state.signinError = 'Could not reach the server. Check your connection.';
     render();
@@ -748,6 +765,18 @@ function onSignOut() {
   state.adminQueue = { loading: false, error: null, items: null, count: 0 };
   state.review = freshReviewState();
   state.toast = null;
+  // Reset push state to "unknown" — leaves the actual browser
+  // subscription alone (signing back in re-uses it). Skipping a hard
+  // local unsubscribe here is intentional: a user who shares a phone with
+  // a household member would otherwise have to re-grant permissions on
+  // every sign-in.
+  state.push = {
+    supported: null,
+    permission: null,
+    busy: false,
+    subscribed: false,
+    endpoint: null,
+  };
   state.screen = 'signin';
   render();
 }
@@ -1007,6 +1036,241 @@ function errorMessageFor(code, status) {
   }
 }
 
+/* ---- Push notifications ---- */
+// Feature detection: serviceWorker + PushManager + Notification all present.
+// iOS Safari 16.4+ supports Web Push only after Add-to-Home-Screen install,
+// so the API check alone isn't sufficient — we also defer permission asks
+// until a tap. Older iOS will simply see a "Notifications not supported on
+// this browser" message.
+function pushFeatureSupported() {
+  return (
+    'serviceWorker' in navigator &&
+    'PushManager' in window &&
+    'Notification' in window
+  );
+}
+
+// One-shot probe: is there an active subscription right now? Sets
+// state.push.{subscribed, endpoint, permission} and returns nothing.
+async function refreshPushState() {
+  const supported = pushFeatureSupported();
+  state.push.supported = supported;
+  if (!supported) {
+    state.push.permission = 'denied';
+    state.push.subscribed = false;
+    state.push.endpoint = null;
+    return;
+  }
+  state.push.permission = Notification.permission;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    state.push.subscribed = !!sub;
+    state.push.endpoint = sub ? sub.endpoint : null;
+  } catch {
+    state.push.subscribed = false;
+    state.push.endpoint = null;
+  }
+}
+
+// VAPID keys arrive base64url-encoded but PushManager.subscribe needs a
+// raw Uint8Array. Translate.
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+// Subscribe flow: ask permission, fetch VAPID key, subscribe, POST to
+// backend. Re-renders the calling screen between steps so the button's
+// "Subscribing…" state is visible. Toast on failure.
+async function subscribeToPush() {
+  if (state.push.busy) return;
+  if (!state.user) return;
+
+  state.push.busy = true;
+  render();
+
+  try {
+    if (!pushFeatureSupported()) {
+      setToast('Notifications aren\u2019t supported on this browser.');
+      return;
+    }
+
+    // Permission. On iOS this prompt only appears after the PWA is
+    // installed via Add to Home Screen, otherwise it silently denies.
+    let permission = Notification.permission;
+    if (permission === 'default') {
+      permission = await Notification.requestPermission();
+    }
+    state.push.permission = permission;
+    if (permission !== 'granted') {
+      setToast(
+        permission === 'denied'
+          ? 'Notifications are blocked. Enable them in your browser settings.'
+          : 'Notifications were not granted.',
+      );
+      return;
+    }
+
+    // Get the VAPID public key from the backend (cached after first call
+    // would be a nice optimisation, but a single network round-trip on
+    // a button-tap is fine).
+    const keyResp = await fetch(`${API}/push/public-key`);
+    const keyData = await keyResp.json().catch(() => ({}));
+    if (!keyResp.ok || !keyData.ok || !keyData.public_key) {
+      setToast('Could not set up notifications. Try again later.');
+      return;
+    }
+
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(keyData.public_key),
+      });
+    }
+
+    // POST to backend to record this subscription. Body shape matches
+    // routes-push.js validateSubscriptionBody.
+    const subJson = sub.toJSON();
+    const resp = await fetch(`${API}/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pin: state.user.pin,
+        subscription: {
+          endpoint: subJson.endpoint,
+          keys: subJson.keys,
+        },
+        user_agent: navigator.userAgent,
+      }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      setToast(errorMessageFor(data.error, resp.status) || 'Could not save subscription.');
+      // Best-effort local cleanup so we don't leave the browser thinking
+      // it has a subscription the backend doesn't know about.
+      try { await sub.unsubscribe(); } catch {}
+      return;
+    }
+
+    state.push.subscribed = true;
+    state.push.endpoint = subJson.endpoint;
+    setToast('Notifications turned on.');
+  } catch (err) {
+    console.error('subscribeToPush error:', err);
+    setToast('Could not turn on notifications.');
+  } finally {
+    state.push.busy = false;
+    render();
+  }
+}
+
+// Unsubscribe flow: tell the browser, then tell the backend. Both are
+// idempotent so order matters less, but doing browser-first means a
+// network failure leaves the user actually unsubscribed locally.
+async function unsubscribeFromPush() {
+  if (state.push.busy) return;
+  if (!state.user) return;
+
+  state.push.busy = true;
+  render();
+
+  try {
+    let endpoint = state.push.endpoint;
+    if ('serviceWorker' in navigator && 'PushManager' in window) {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        endpoint = endpoint || sub.endpoint;
+        try { await sub.unsubscribe(); } catch {}
+      }
+    }
+
+    if (endpoint) {
+      await fetch(`${API}/push/unsubscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: state.user.pin, endpoint }),
+      }).catch(() => {});
+    }
+
+    state.push.subscribed = false;
+    state.push.endpoint = null;
+    setToast('Notifications turned off.');
+  } catch (err) {
+    console.error('unsubscribeFromPush error:', err);
+    setToast('Could not turn off notifications.');
+  } finally {
+    state.push.busy = false;
+    render();
+  }
+}
+
+// Render a push-subscription toggle row. `audience` shapes the copy:
+//   'submitter' → My Stories context
+//   'admin'     → Review queue context
+function renderPushToggle(audience) {
+  // Don't render anything until we've completed the feature probe — avoids
+  // a flash of "not supported" before refreshPushState() resolves.
+  if (state.push.supported === null) return '';
+  if (state.push.supported === false) {
+    return `
+      <div class="push-toggle push-toggle--unsupported">
+        Notifications aren\u2019t supported on this browser. Try installing
+        the app to your home screen.
+      </div>`;
+  }
+  if (state.push.permission === 'denied') {
+    return `
+      <div class="push-toggle push-toggle--denied">
+        Notifications are blocked for this site. Enable them in your
+        browser settings, then come back.
+      </div>`;
+  }
+  const subscribed = state.push.subscribed;
+  const busy = state.push.busy;
+  const heading =
+    audience === 'admin'
+      ? 'Get notified when new stories arrive'
+      : 'Get notified when your stories are reviewed';
+  const note = subscribed
+    ? 'You\u2019ll get a push on this device when something changes.'
+    : 'A small alert from your phone, no email needed.';
+  const buttonLabel = subscribed
+    ? busy ? 'Turning off…' : 'Turn off'
+    : busy ? 'Turning on…' : 'Turn on';
+  return `
+    <div class="push-toggle">
+      <div class="push-toggle__copy">
+        <div class="push-toggle__heading">${escapeHtml(heading)}</div>
+        <div class="push-toggle__note">${escapeHtml(note)}</div>
+      </div>
+      <button type="button" class="btn btn--secondary push-toggle__btn"
+              id="push-toggle-btn"${busy ? ' disabled' : ''}>
+        ${escapeHtml(buttonLabel)}
+      </button>
+    </div>`;
+}
+
+// Wire the toggle button (call after each render that includes it).
+function wirePushToggle() {
+  const btn = document.getElementById('push-toggle-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    if (state.push.subscribed) {
+      unsubscribeFromPush();
+    } else {
+      subscribeToPush();
+    }
+  });
+}
+
 /* ---- Screen: my recent submissions ---- */
 // Translate the canonical backend status into submitter-friendly copy.
 // CSS class still keys off the canonical value (existing colour rules
@@ -1082,6 +1346,7 @@ function renderRecent() {
   }
 
   root.innerHTML = `
+    ${toastHtml()}
     <div class="topbar">
       <button class="topbar__back" type="button" id="back-btn">← Back</button>
       <button class="topbar__refresh" type="button" id="refresh-btn"${r.loading ? ' disabled' : ''}>
@@ -1092,6 +1357,7 @@ function renderRecent() {
     <h1>My Stories</h1>
     <p class="lead">Tap a story to see how it looks.</p>
     ${body}
+    ${renderPushToggle('submitter')}
   `;
 
   document.getElementById('back-btn').addEventListener('click', () => {
@@ -1101,6 +1367,7 @@ function renderRecent() {
   document.getElementById('refresh-btn').addEventListener('click', () => {
     if (!r.loading) fetchRecentSubmissions();
   });
+  wirePushToggle();
   const showOlderBtn = document.getElementById('show-older-btn');
   if (showOlderBtn) {
     showOlderBtn.addEventListener('click', () => {
@@ -1294,6 +1561,7 @@ function renderQueue() {
     <h1>Review queue</h1>
     <p class="lead">Stories waiting your approval. Tap one to review.</p>
     ${body}
+    ${renderPushToggle('admin')}
   `;
 
   document.getElementById('back-btn').addEventListener('click', () => {
@@ -1303,6 +1571,7 @@ function renderQueue() {
   document.getElementById('refresh-btn').addEventListener('click', () => {
     if (!q.loading) fetchPendingQueue();
   });
+  wirePushToggle();
   const list = document.querySelector('.queue-list');
   if (list) {
     list.addEventListener('click', (e) => {
@@ -1979,6 +2248,11 @@ function boot() {
   if (u) {
     state.screen = 'submit';
     if (u.role === 'Admin') fetchPendingCount();
+    // Probe push state in the background; the toggle (rendered on My
+    // Stories / Review queue) re-renders once we know what to show.
+    refreshPushState().then(() => {
+      if (state.screen === 'recent' || state.screen === 'queue') render();
+    });
   } else {
     state.screen = 'signin';
   }

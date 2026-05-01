@@ -727,6 +727,46 @@ select {
   width: 100%;
 }
 
+/* ---- Push subscription toggle ----
+   Shown at the bottom of My Stories (submitter copy) and Review queue
+   (admin copy). One row: heading + sub-text on the left, action button
+   on the right. */
+.push-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+  padding: 14px 16px;
+  background: rgba(45, 27, 14, 0.04);
+  border: 1px solid rgba(45, 27, 14, 0.1);
+  border-radius: var(--radius);
+}
+.push-toggle__copy {
+  flex: 1;
+  min-width: 0;
+}
+.push-toggle__heading {
+  font-weight: 600;
+  color: var(--charcoal);
+  margin-bottom: 2px;
+}
+.push-toggle__note {
+  font-size: 13px;
+  color: var(--charcoal-soft);
+}
+.push-toggle__btn {
+  flex: 0 0 auto;
+  width: auto;
+  white-space: nowrap;
+  padding: 10px 16px;
+}
+.push-toggle--unsupported,
+.push-toggle--denied {
+  display: block;
+  font-size: 13px;
+  color: var(--charcoal-soft);
+}
+
 /* ---- Status badges ---- */
 .status {
   display: inline-block;

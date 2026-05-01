@@ -13,6 +13,7 @@ import {
   getTabLayout,
   hasAdminNoteColumn,
 } from './admin-helpers.js';
+import { sendPushToUser } from './send-push.js';
 
 const router = Router();
 
@@ -256,7 +257,15 @@ async function flipStatus({ sheets, sheetId, destination, rowNumber, newStatus, 
     },
   });
 
-  return { ok: true, updates: updates.length };
+  // Return the row's title and submitted-by so callers can use them in
+  // follow-up actions (e.g. push notifications) without re-reading the
+  // sheet. Both come from the targetRow we already fetched above.
+  return {
+    ok: true,
+    updates: updates.length,
+    title: String(targetRow[t.layout.contentTitle] ?? '').trim(),
+    submittedBy: String(targetRow[t.layout.submittedBy] ?? '').trim(),
+  };
 }
 
 /* Update title / highlight / body text for a Waiting Approval row.
@@ -415,6 +424,22 @@ router.post('/admin/approve', async (req, res) => {
       return res.status(result.status).json({ ok: false, error: result.error });
     }
 
+    // Fire-and-forget push to the submitter — they won't get an email
+    // today, so push is the only async signal they receive on approval.
+    // Failures are logged inside sendPushToUser; they never affect the
+    // response to the admin.
+    if (result.submittedBy) {
+      const rowNum = parseInt(row_number, 10);
+      sendPushToUser(result.submittedBy, {
+        title: 'Story approved 🎉',
+        body: result.title
+          ? `"${result.title}" is now live on the Hub.`
+          : 'Your story is now live on the Hub.',
+        url: `/?my-story=${encodeURIComponent(destination)}&row=${rowNum}`,
+        tag: `story-approved-${destination}-${rowNum}`,
+      });
+    }
+
     logAdmin('/admin/approve', true, 'OK', { destination, row_number, cells: result.updates });
     return res.json({ ok: true });
   } catch (err) {
@@ -449,6 +474,24 @@ router.post('/admin/reject', async (req, res) => {
     if (!result.ok) {
       logAdmin('/admin/reject', false, result.error, { destination, row_number });
       return res.status(result.status).json({ ok: false, error: result.error });
+    }
+
+    // Fire-and-forget push to the submitter. Surfaces the rejection in
+    // the My Stories detail view (where the AdminNote is also shown), so
+    // the submitter sees the reason without waiting for an out-of-band
+    // conversation.
+    if (result.submittedBy) {
+      const rowNum = parseInt(row_number, 10);
+      sendPushToUser(result.submittedBy, {
+        title: 'Story not published',
+        body: result.title
+          ? cleanReason
+            ? `"${result.title}" — ${cleanReason}`
+            : `"${result.title}" was not published. Tap to see why.`
+          : 'One of your stories was not published. Tap to see why.',
+        url: `/?my-story=${encodeURIComponent(destination)}&row=${rowNum}`,
+        tag: `story-rejected-${destination}-${rowNum}`,
+      });
     }
 
     logAdmin('/admin/reject', true, 'OK', {

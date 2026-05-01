@@ -2,7 +2,10 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { Resend } from 'resend';
 import { ADMIN_DESTINATIONS } from './admin-helpers.js';
+import { findAdminNames, USERS_RANGE } from './auth.js';
+import { getSheetsClient } from './google-client.js';
 import { buildDeepLink, buildNotifyEmail } from './email.js';
+import { sendPushToUsers } from './send-push.js';
 
 const router = Router();
 
@@ -96,6 +99,17 @@ router.post('/admin/notify', async (req, res) => {
       logNotify(false, 'EMAIL_FAILED', { msg: error.message });
       return res.status(500).json({ ok: false, error: 'EMAIL_FAILED' });
     }
+    // Fire-and-forget push to all admins, in addition to the email.
+    // Non-fatal: the email has already gone out and the admin can still
+    // open the queue manually. Resolves admin names from Users tab — push
+    // fans out to every Admin who's subscribed at least one device.
+    pushNewPendingToAdmins({
+      destination,
+      rowNumber: rowNum,
+      title: title.trim(),
+      submittedBy: submitted_by.trim(),
+    });
+
     logNotify(true, 'OK', { id: data?.id, destination, row_number: rowNum });
     return res.json({ ok: true });
   } catch (err) {
@@ -104,5 +118,30 @@ router.post('/admin/notify', async (req, res) => {
     return res.status(500).json({ ok: false, error: 'EMAIL_FAILED' });
   }
 });
+
+// Resolve all admin FullNames from the Users tab and fire a push to the
+// union of their subscribed devices. Errors are swallowed — caller has
+// already responded.
+async function pushNewPendingToAdmins({ destination, rowNumber, title, submittedBy }) {
+  try {
+    const sheets = getSheetsClient();
+    const sheetId = process.env.INTRANET_CONTROL_SHEET_ID;
+    if (!sheetId) return;
+    const usersResp = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: USERS_RANGE,
+    });
+    const adminNames = findAdminNames(usersResp.data.values || []);
+    if (adminNames.length === 0) return;
+    await sendPushToUsers(adminNames, {
+      title: 'New story to review',
+      body: `"${title}" by ${submittedBy}`,
+      url: `/?review=${encodeURIComponent(destination)}&row=${rowNumber}`,
+      tag: `pending-${destination}-${rowNumber}`,
+    });
+  } catch (err) {
+    console.error('pushNewPendingToAdmins error:', err.message);
+  }
+}
 
 export default router;

@@ -10,6 +10,24 @@ const ACTIVE_IDX = 5;  // F (string "TRUE" / "FALSE")
 const PIN_IDX = 11;    // L
 const EMAIL_IDX = 12;  // M
 
+// Pure function: returns an array of FullName values for every Active user
+// whose Role is "Admin". Used to fan out admin push notifications.
+// Skips inactive users (consistent with sign-in) and trims whitespace.
+export function findAdminNames(rows) {
+  if (!Array.isArray(rows)) return [];
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const role = (row[ROLE_IDX] ?? '').toString().trim();
+    const active = (row[ACTIVE_IDX] ?? '').toString().trim().toUpperCase();
+    if (role === 'Admin' && active === 'TRUE') {
+      const name = (row[NAME_IDX] ?? '').toString().trim();
+      if (name) out.push(name);
+    }
+  }
+  return out;
+}
+
 // Pure function: given the rows of the Users tab (including header at index 0)
 // and a submitted PIN, return the auth result.
 //
