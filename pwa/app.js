@@ -1311,9 +1311,17 @@ async function sendPushTest() {
         'If nothing arrives, check phone notification settings.',
       );
     } else if (data.failed > 0) {
-      setToast(
-        `Send failed (${data.failed}). ${data.pruned ? 'Subscription was stale and removed.' : 'Try Turn off / Turn on again.'}`,
-      );
+      // Surface the FCM/VAPID error verbatim so we can diagnose without
+      // chasing Railway logs. The body is already truncated server-side.
+      const first = Array.isArray(data.errors) && data.errors[0];
+      const detail = first
+        ? `${first.status || 'no status'}: ${first.body || '(no body)'}`
+        : 'unknown';
+      if (data.pruned) {
+        setToast(`Subscription was stale and removed. Try Turn off / Turn on again.`);
+      } else {
+        setToast(`Send failed — ${detail}`);
+      }
     } else {
       setToast('No push sent. Try Turn off / Turn on again.');
     }

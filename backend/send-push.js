@@ -152,10 +152,15 @@ async function deleteSubscriptionRow(sheets, spreadsheetId, rowNumber) {
 export async function sendPushToSubscriptions(subscriptions, payload) {
   if (!configureVapid()) {
     console.error('VAPID env vars not set; skipping push send');
-    return { sent: 0, failed: subscriptions.length, pruned: 0 };
+    return {
+      sent: 0,
+      failed: subscriptions.length,
+      pruned: 0,
+      errors: [{ status: null, body: 'VAPID env vars not set on server' }],
+    };
   }
   if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
-    return { sent: 0, failed: 0, pruned: 0 };
+    return { sent: 0, failed: 0, pruned: 0, errors: [] };
   }
 
   const body = JSON.stringify(payload);
@@ -165,6 +170,9 @@ export async function sendPushToSubscriptions(subscriptions, payload) {
   // Rows pruned in descending order so each delete doesn't shift the
   // indices of subsequent ones.
   const toPrune = [];
+  // Per-failure detail captured for callers that want to surface the
+  // reason (e.g. /push/test toast). Each entry: { status, body }.
+  const errors = [];
   let sent = 0;
   let failed = 0;
 
@@ -191,14 +199,21 @@ export async function sendPushToSubscriptions(subscriptions, payload) {
     }
     failed++;
     const status = r.reason?.statusCode;
+    const errBody = r.reason?.body || r.reason?.message || String(r.reason);
     if (status === 410 || status === 404) {
       toPrune.push(sub.rowNumber);
     } else {
       console.error(
         `push send failed for ${sub.username} (${status || 'no status'}):`,
-        r.reason?.body || r.reason?.message || r.reason,
+        errBody,
       );
     }
+    errors.push({
+      status: status || null,
+      // Truncate body so we don't blow up logs/toasts if a push service
+      // returns a verbose HTML error page.
+      body: typeof errBody === 'string' ? errBody.slice(0, 200) : '',
+    });
   }
 
   // Prune dead subscriptions in descending row order so deletes don't
@@ -215,7 +230,7 @@ export async function sendPushToSubscriptions(subscriptions, payload) {
     }
   }
 
-  return { sent, failed, pruned };
+  return { sent, failed, pruned, errors };
 }
 
 // Convenience: send to all of a user's devices. Logs a single structured
@@ -236,7 +251,7 @@ export async function sendPushToUser(userName, payload) {
         note: 'no_subscriptions',
         title: payload?.title || '',
       }));
-      return { sent: 0, failed: 0, pruned: 0 };
+      return { sent: 0, failed: 0, pruned: 0, errors: [] };
     }
     const result = await sendPushToSubscriptions(subs, payload);
     console.log(JSON.stringify({
@@ -244,7 +259,10 @@ export async function sendPushToUser(userName, payload) {
       target: userName,
       targets: 1,
       subs: subs.length,
-      ...result,
+      sent: result.sent,
+      failed: result.failed,
+      pruned: result.pruned,
+      errors: result.errors,
       title: payload?.title || '',
     }));
     return result;
@@ -256,7 +274,7 @@ export async function sendPushToUser(userName, payload) {
       targets: 1,
       error: err.message,
     }));
-    return { sent: 0, failed: 0, pruned: 0 };
+    return { sent: 0, failed: 0, pruned: 0, errors: [{ status: null, body: err.message }] };
   }
 }
 
@@ -276,7 +294,7 @@ export async function sendPushToUsers(userNames, payload) {
         note: 'no_subscriptions',
         title: payload?.title || '',
       }));
-      return { sent: 0, failed: 0, pruned: 0 };
+      return { sent: 0, failed: 0, pruned: 0, errors: [] };
     }
     const result = await sendPushToSubscriptions(subs, payload);
     console.log(JSON.stringify({
@@ -284,7 +302,10 @@ export async function sendPushToUsers(userNames, payload) {
       targets: userNames.length,
       targetNames: userNames,
       subs: subs.length,
-      ...result,
+      sent: result.sent,
+      failed: result.failed,
+      pruned: result.pruned,
+      errors: result.errors,
       title: payload?.title || '',
     }));
     return result;
@@ -295,6 +316,6 @@ export async function sendPushToUsers(userNames, payload) {
       targets: userNames?.length || 0,
       error: err.message,
     }));
-    return { sent: 0, failed: 0, pruned: 0 };
+    return { sent: 0, failed: 0, pruned: 0, errors: [{ status: null, body: err.message }] };
   }
 }

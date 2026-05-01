@@ -303,8 +303,24 @@ router.post('/push/test', async (req, res) => {
       tag: 'push-test',
     });
 
-    logEndpoint('/push/test', true, 'OK', { user: auth.name, ...result });
-    return res.json({ ok: true, ...result });
+    logEndpoint('/push/test', true, 'OK', {
+      user: auth.name,
+      sent: result.sent,
+      failed: result.failed,
+      pruned: result.pruned,
+    });
+    // Return errors array so the client can surface the FCM/VAPID reason
+    // in the toast — saves a Railway-logs round-trip during diagnosis.
+    // sent + failed = total subscriptions attempted (pruned is a subset
+    // of failed — those rows have already been deleted from the sheet).
+    return res.json({
+      ok: true,
+      sent: result.sent,
+      failed: result.failed,
+      pruned: result.pruned,
+      subs: result.sent + result.failed,
+      errors: result.errors || [],
+    });
   } catch (err) {
     console.error('push/test error:', err.message);
     return res.status(500).json({ ok: false, error: 'INTERNAL_ERROR' });
