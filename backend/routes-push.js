@@ -15,7 +15,7 @@
 import { Router } from 'express';
 import { findUserByPin, USERS_RANGE } from './auth.js';
 import { getSheetsClient } from './google-client.js';
-import { PUSH_TAB, PUSH_RANGE, getPublicKey } from './send-push.js';
+import { PUSH_TAB, PUSH_RANGE, getPublicKey, sendPushToUser } from './send-push.js';
 
 const router = Router();
 
@@ -255,6 +255,58 @@ router.post('/push/unsubscribe', async (req, res) => {
     return res.json({ ok: true, removed: true });
   } catch (err) {
     console.error('push/unsubscribe error:', err.message);
+    return res.status(500).json({ ok: false, error: 'INTERNAL_ERROR' });
+  }
+});
+
+// ---- POST /push/test -------------------------------------------------------
+// PIN-authed self-test: send a notification immediately to the caller's own
+// subscriptions. Useful for diagnosing "I subscribed but never got a push" —
+// isolates the round-trip from the approve/reject flows. Returns the same
+// summary that gets logged ({ sent, failed, pruned, subs }) so the client
+// can show a useful toast.
+router.post('/push/test', async (req, res) => {
+  const pinCheck = pinValidationError(req);
+  if (!pinCheck.ok) {
+    logEndpoint('/push/test', false, pinCheck.error);
+    return res.status(pinCheck.status).json({ ok: false, error: pinCheck.error });
+  }
+
+  try {
+    const sheets = getSheetsClient();
+    const sheetId = process.env.INTRANET_CONTROL_SHEET_ID;
+    if (!sheetId) {
+      console.error('INTRANET_CONTROL_SHEET_ID not set');
+      return res.status(500).json({ ok: false, error: 'INTERNAL_ERROR' });
+    }
+    const usersResp = await sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: USERS_RANGE,
+    });
+    const auth = findUserByPin(usersResp.data.values || [], pinCheck.pin);
+    if (!auth.ok) {
+      const status = auth.error === 'INACTIVE_USER' ? 403 : 401;
+      logEndpoint('/push/test', false, auth.error);
+      return res.status(status).json(auth);
+    }
+
+    console.log(JSON.stringify({
+      event: 'push.trigger',
+      source: '/push/test',
+      target: auth.name,
+    }));
+
+    const result = await sendPushToUser(auth.name, {
+      title: 'Test notification 🔔',
+      body: 'If you can see this, push notifications are working on this device.',
+      url: '/',
+      tag: 'push-test',
+    });
+
+    logEndpoint('/push/test', true, 'OK', { user: auth.name, ...result });
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('push/test error:', err.message);
     return res.status(500).json({ ok: false, error: 'INTERNAL_ERROR' });
   }
 });

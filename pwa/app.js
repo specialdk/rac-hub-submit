@@ -1245,6 +1245,16 @@ function renderPushToggle(audience) {
   const buttonLabel = subscribed
     ? busy ? 'Turning off…' : 'Turn off'
     : busy ? 'Turning on…' : 'Turn on';
+  // When subscribed, surface a tiny "Send test" link below the toggle —
+  // taps /push/test which fires a one-shot notification to the caller's
+  // own subscriptions. Lets the user (and us) verify the round-trip
+  // without having to go through the full submit→trigger→approve flow.
+  const testRow = subscribed
+    ? `<button type="button" class="push-toggle__test"
+               id="push-test-btn"${busy ? ' disabled' : ''}>
+         Send test notification
+       </button>`
+    : '';
   return `
     <div class="push-toggle">
       <div class="push-toggle__copy">
@@ -1255,20 +1265,62 @@ function renderPushToggle(audience) {
               id="push-toggle-btn"${busy ? ' disabled' : ''}>
         ${escapeHtml(buttonLabel)}
       </button>
-    </div>`;
+    </div>
+    ${testRow}`;
 }
 
 // Wire the toggle button (call after each render that includes it).
 function wirePushToggle() {
   const btn = document.getElementById('push-toggle-btn');
-  if (!btn) return;
-  btn.addEventListener('click', () => {
-    if (state.push.subscribed) {
-      unsubscribeFromPush();
-    } else {
-      subscribeToPush();
+  if (btn) {
+    btn.addEventListener('click', () => {
+      if (state.push.subscribed) {
+        unsubscribeFromPush();
+      } else {
+        subscribeToPush();
+      }
+    });
+  }
+  const testBtn = document.getElementById('push-test-btn');
+  if (testBtn) {
+    testBtn.addEventListener('click', sendPushTest);
+  }
+}
+
+// Fire the /push/test self-test. Toast surfaces the result so we know
+// whether the round-trip worked even if the OS suppresses the actual
+// notification (e.g. Huawei battery management).
+async function sendPushTest() {
+  if (!state.user) return;
+  try {
+    const resp = await fetch(`${API}/push/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: state.user.pin }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.ok) {
+      setToast(errorMessageFor(data.error, resp.status) || 'Test failed.');
+      return;
     }
-  });
+    if (data.subs === 0) {
+      setToast('No subscriptions found for your account on the server.');
+    } else if (data.sent > 0) {
+      setToast(
+        `Sent to ${data.sent} device${data.sent === 1 ? '' : 's'}. ` +
+        'If nothing arrives, check phone notification settings.',
+      );
+    } else if (data.failed > 0) {
+      setToast(
+        `Send failed (${data.failed}). ${data.pruned ? 'Subscription was stale and removed.' : 'Try Turn off / Turn on again.'}`,
+      );
+    } else {
+      setToast('No push sent. Try Turn off / Turn on again.');
+    }
+  } catch (err) {
+    console.error('sendPushTest error:', err);
+    setToast('Could not reach the server.');
+  }
 }
 
 /* ---- Screen: my recent submissions ---- */

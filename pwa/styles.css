@@ -766,6 +766,24 @@ select {
   font-size: 13px;
   color: var(--charcoal-soft);
 }
+.push-toggle__test {
+  display: block;
+  margin: 8px 0 0;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  color: var(--terracotta);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+  text-align: left;
+  min-height: 32px;
+}
+.push-toggle__test:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* ---- Status badges ---- */
 .status {
