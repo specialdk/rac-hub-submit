@@ -727,6 +727,27 @@ select {
   width: 100%;
 }
 
+/* Pending list entry — local-only "just submitted" placeholder shown
+   above real entries until the runner processes the submission. Subtle
+   terracotta accent left border so it's visually distinct from approved
+   stories without shouting. */
+.recent-item--pending {
+  border-left: 4px solid var(--terracotta);
+}
+.recent-item--pending .recent-item__thumb {
+  /* Slightly desaturate the thumbnail so it reads as "in flight" */
+  filter: saturate(0.85);
+}
+
+/* Inline error banner — shown alongside pending entries when /my-submissions
+   fails but we still have local pending to surface. Keeps the page useful
+   instead of replacing everything with the error. */
+.error--inline {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
 /* ---- Push subscription toggle ----
    Shown at the bottom of My Stories (submitter copy) and Review queue
    (admin copy). One row: heading + sub-text on the left, action button
@@ -811,6 +832,10 @@ select {
 .status--unknown {
   background: rgba(45, 27, 14, 0.06);
   color: var(--charcoal-soft);
+}
+.status--processing {
+  background: rgba(196, 101, 26, 0.15);
+  color: var(--terracotta-dark);
 }
 
 /* ---- Admin banner (CTA on Submit screen for Admin role) ---- */
@@ -1121,6 +1146,16 @@ select {
 .review-self-banner--archived {
   background: rgba(45, 27, 14, 0.06);
   border-left: 4px solid var(--charcoal-soft);
+}
+.review-self-banner--processing {
+  background: rgba(196, 101, 26, 0.1);
+  border-left: 4px solid var(--terracotta);
+}
+/* Subtle italics on the placeholder highlight in pending mode so it's
+   clear that's not the final copy. */
+.review-highlights--placeholder em {
+  color: var(--charcoal-soft);
+  font-style: italic;
 }
 .review-self-banner__heading {
   font-weight: 700;

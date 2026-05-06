@@ -37,6 +37,13 @@ const LS_PIN = 'rac_hub_pin';
 const LS_NAME = 'rac_hub_user_name';
 const LS_EMAIL = 'rac_hub_user_email';
 const LS_ROLE = 'rac_hub_user_role';
+const LS_PENDING = 'rac_hub_pending_submissions';
+// Pending entries auto-expire after 60 minutes — covers two scheduled
+// runner cycles plus a generous buffer for missed cycles (laptop asleep,
+// etc). Past this, we assume either the runner processed it (and the
+// real entry is now visible) or something needs admin attention; either
+// way the local placeholder isn't useful.
+const PENDING_EXPIRY_MS = 60 * 60 * 1000;
 
 function loadUser() {
   const pin = localStorage.getItem(LS_PIN);
@@ -61,6 +68,109 @@ function clearUser() {
   localStorage.removeItem(LS_NAME);
   localStorage.removeItem(LS_EMAIL);
   localStorage.removeItem(LS_ROLE);
+  // Also drop pending submissions — they belong to the previous user
+  // and have no value to whoever signs in next.
+  localStorage.removeItem(LS_PENDING);
+}
+
+/* Pending-submission helpers.
+
+   When a submitter taps Submit, we save a lightweight snapshot of what
+   was sent to localStorage. The My Stories list shows it at the top with
+   a "Processing" badge until either:
+
+     - the runner processes it and the real entry appears in
+       /my-submissions (no automatic merge — both will briefly show, the
+       pending then expires), or
+     - PENDING_EXPIRY_MS elapses and we drop it (assume it processed and
+       lives in the real list, OR something went wrong and the admin
+       needs to look at it).
+
+   Storage shape: array of objects, each with a unique id, the form
+   data the user submitted, and a small banner thumbnail data URL.
+   Only the banner is stored — body images would balloon localStorage. */
+
+function loadPendingSubmissions() {
+  try {
+    const raw = localStorage.getItem(LS_PENDING);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    // Corrupted JSON — better to drop than to crash the render.
+    return [];
+  }
+}
+
+function savePendingSubmissions(arr) {
+  try {
+    localStorage.setItem(LS_PENDING, JSON.stringify(arr));
+  } catch (err) {
+    // Quota exceeded (rare — thumbs are ~10KB and we cap at a few entries).
+    // Drop the oldest until it fits, or give up silently — the missing
+    // pending entry isn't worth surfacing as an error to the submitter.
+    console.warn('Could not save pending submission:', err);
+  }
+}
+
+function addPendingSubmission(entry) {
+  const all = loadPendingSubmissions();
+  all.push(entry);
+  savePendingSubmissions(all);
+}
+
+// Prune entries older than the expiry window. Returns the pruned-down
+// array (also persisted if anything changed).
+function prunePendingSubmissions() {
+  const all = loadPendingSubmissions();
+  const now = Date.now();
+  const kept = all.filter((e) => {
+    const t = Date.parse(e.submitted_at_iso || '');
+    return Number.isFinite(t) && now - t < PENDING_EXPIRY_MS;
+  });
+  if (kept.length !== all.length) savePendingSubmissions(kept);
+  return kept;
+}
+
+// Resize a Blob (the already-processed banner) down to a small thumbnail
+// data URL suitable for localStorage. ~10-30KB at 256px max edge, JPEG q70.
+async function blobToThumbnailDataURL(blob, maxEdge = 256) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('thumbnail decode failed'));
+      i.src = url;
+    });
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    const longest = Math.max(w, h);
+    const scale = longest > maxEdge ? maxEdge / longest : 1;
+    const outW = Math.max(1, Math.round(w * scale));
+    const outH = Math.max(1, Math.round(h * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = outW;
+    canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('thumbnail canvas ctx unavailable');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, outW, outH);
+    return canvas.toDataURL('image/jpeg', 0.7);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Format a Date as "Month D, YYYY" — matches how the runner writes
+// ContentDate so a pending entry sorts naturally alongside real entries.
+function formatContentDate(d) {
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
+  return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
 }
 
 /* ---- App state ---- */
@@ -886,6 +996,34 @@ async function performSubmit() {
     }
     state.lastFolderName = data.folder_name;
     state.submitProgress = 'done';
+
+    // Save a local "pending" snapshot so My Stories can show it
+    // immediately, instead of waiting ~15 min for the runner to write
+    // the real row. The thumbnail is built from the already-resized
+    // banner Blob — no double-processing of the original file.
+    try {
+      const bannerThumb = await blobToThumbnailDataURL(processed[0]);
+      const submittedAt = new Date();
+      addPendingSubmission({
+        id: `local-${submittedAt.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
+        destination: f.destination,
+        title_suggestion: f.title.trim(),
+        highlight_suggestion: f.highlight.trim(),
+        text: f.text,
+        banner_thumb: bannerThumb,
+        body_count: Math.max(0, processed.length - 1),
+        submitted_at_iso: submittedAt.toISOString(),
+        submitted_date: formatContentDate(submittedAt),
+        submitted_by: state.user.name || '',
+        folder_name: data.folder_name || '',
+      });
+    } catch (err) {
+      // Non-fatal — submission still uploaded successfully, just no
+      // optimistic local entry. Submitter will see it once the runner
+      // catches up (~15 min).
+      console.warn('Could not save pending entry:', err);
+    }
+
     state.form = { destination: 'General', text: '', title: '', highlight: '', files: [] };
     render();
   } catch (err) {
@@ -1389,8 +1527,21 @@ function statusSlug(rawStatus) {
 // looking at exactly what's live on the Hub. Archived stories surface
 // the AdminNote when the admin left one, so submitters get rejection
 // feedback in the PWA rather than only via email.
-function renderSelfBanner(status, adminNote) {
+function renderSelfBanner(status, adminNote, extras) {
   const s = String(status || '').trim();
+  if (s === 'Processing') {
+    // Synthetic status used by openPendingDetail — the local-only entry
+    // shown immediately after submit, before the runner has cycled.
+    const bodyCount = extras && extras.bodyCount ? extras.bodyCount : 0;
+    const bodyNote = bodyCount > 0
+      ? ` ${bodyCount} body photo${bodyCount === 1 ? '' : 's'} uploaded; the carousel will appear once processing completes.`
+      : '';
+    return `
+      <div class="review-self-banner review-self-banner--processing">
+        <p class="review-self-banner__heading">Processing</p>
+        <p class="review-self-banner__note">Your story is in the queue for editorial cleanup. It usually takes 10–15 minutes to appear here as <em>Awaiting review</em>.${bodyNote}</p>
+      </div>`;
+  }
   if (s === 'Waiting Approval') {
     return `
       <div class="review-self-banner review-self-banner--waiting">
@@ -1416,28 +1567,48 @@ function renderRecent() {
   const u = state.user;
   const r = state.recent;
 
+  // Drop any pending entries past their expiry window before reading.
+  // Newest first — most recent submission floats to the top of the list.
+  const pending = prunePendingSubmissions().slice().sort((a, b) => {
+    const ta = Date.parse(a.submitted_at_iso || '') || 0;
+    const tb = Date.parse(b.submitted_at_iso || '') || 0;
+    return tb - ta;
+  });
+
   let body;
-  if (r.loading && r.items === null) {
+  if (r.loading && r.items === null && pending.length === 0) {
     body = `
       <div class="progress">
         <div class="progress__spinner" aria-hidden="true"></div>
         <div class="progress__step">Loading…</div>
       </div>`;
-  } else if (r.error) {
+  } else if (r.error && pending.length === 0) {
     body = `<div class="error">${escapeHtml(r.error)}</div>`;
-  } else if (!r.items || r.items.length === 0) {
+  } else if ((!r.items || r.items.length === 0) && pending.length === 0) {
     body = `<p class="lead">No submissions yet — submit your first story above.</p>`;
   } else {
-    const list = `<ul class="recent-list">${r.items.map(renderRecentItem).join('')}</ul>`;
+    // Pending entries always sit at the top of the list, above any real
+    // entries from the backend. They render with a Processing badge and
+    // tap through to the local detail view (no API fetch).
+    const pendingHtml = pending.map(renderPendingItem).join('');
+    const realHtml = (r.items || []).map(renderRecentItem).join('');
+    const list = `<ul class="recent-list">${pendingHtml}${realHtml}</ul>`;
     // Show "Show older" only if backend reported more rows than we currently
     // show AND we're still on the default 10. Once expanded to 30, no
     // further pagination — that's enough for any plausible RAC scale.
     const moreAvailable =
-      r.limit < 30 && Number.isFinite(r.total) && r.total > r.items.length;
+      r.limit < 30 &&
+      Number.isFinite(r.total) &&
+      r.total > (r.items ? r.items.length : 0);
     const showOlder = moreAvailable
       ? `<button class="btn btn--secondary show-older-btn" type="button" id="show-older-btn">Show older stories</button>`
       : '';
-    body = `${list}${showOlder}`;
+    // If we're showing a stale error alongside pending entries, surface it
+    // less noisily so the pending isn't crowded out.
+    const errorBanner = r.error && pending.length > 0
+      ? `<div class="error error--inline">${escapeHtml(r.error)}</div>`
+      : '';
+    body = `${errorBanner}${list}${showOlder}`;
   }
 
   root.innerHTML = `
@@ -1472,12 +1643,18 @@ function renderRecent() {
   }
 
   // Tap-through: each list item opens the self-view detail render.
-  // Event delegation on the list — no per-item listener.
+  // Event delegation on the list — no per-item listener. Branches on
+  // whether the item is a pending (local-only) or real (backend) row.
   const list = document.querySelector('.recent-list');
   if (list) {
     list.addEventListener('click', (e) => {
       const li = e.target.closest('.recent-item');
       if (!li) return;
+      const pendingId = li.dataset.pendingId;
+      if (pendingId) {
+        openPendingDetail(pendingId);
+        return;
+      }
       const destination = li.dataset.destination;
       const rowNumber = parseInt(li.dataset.row, 10);
       if (destination && Number.isInteger(rowNumber)) {
@@ -1485,6 +1662,34 @@ function renderRecent() {
       }
     });
   }
+}
+
+// Render one pending (local-only) entry. Visually similar to a real
+// entry but with a Processing badge and a subtle accent so the
+// distinction is clear at a glance.
+function renderPendingItem(entry) {
+  const banner = entry.banner_thumb
+    ? `<img class="recent-item__thumb" src="${escapeAttr(entry.banner_thumb)}" alt="" />`
+    : `<div class="recent-item__thumb recent-item__thumb--placeholder" aria-hidden="true">📰</div>`;
+  const title = entry.title_suggestion || '(Title will be generated)';
+  return `
+    <li class="recent-item recent-item--tappable recent-item--pending"
+        data-pending-id="${escapeAttr(entry.id)}"
+        role="button"
+        tabindex="0"
+        aria-label="Open pending story ${escapeAttr(title)}">
+      ${banner}
+      <div class="recent-item__content">
+        <div class="recent-item__row">
+          <span class="recent-item__title">${escapeHtml(title)}</span>
+          <span class="status status--processing">Processing</span>
+        </div>
+        <div class="recent-item__meta">
+          ${escapeHtml(entry.destination || '')} · ${escapeHtml(entry.submitted_date || '')} · just submitted
+        </div>
+      </div>
+    </li>
+  `;
 }
 
 function renderRecentItem(item) {
@@ -1545,6 +1750,45 @@ async function fetchRecentSubmissions() {
 // stories. Reuses the admin Review Detail render with mode='self', which
 // hides the Reject/Edit/Approve footer and surfaces status-appropriate
 // banners (Awaiting review note, AdminNote on Not published).
+// Open the pending detail view for a local-only entry. No API fetch —
+// data comes straight from localStorage. Reuses the review screen with
+// mode='pending' so the visual treatment matches the rest of My Stories.
+function openPendingDetail(pendingId) {
+  const all = prunePendingSubmissions();
+  const entry = all.find((e) => e.id === pendingId);
+  if (!entry) {
+    // Pending was just expired or was never there; fall back to the list.
+    state.screen = 'recent';
+    render();
+    return;
+  }
+  state.review = freshReviewState();
+  state.review.mode = 'pending';
+  state.review.destination = entry.destination;
+  // Construct the same shape as /my-submission returns, so the existing
+  // review render code path works. Title and highlight may be blank
+  // (will be generated by the runner) — render handles that.
+  state.review.data = {
+    destination: entry.destination,
+    row_number: 0,
+    title: entry.title_suggestion || '',
+    highlight: entry.highlight_suggestion || '',
+    text: entry.text || '',
+    banner_url: entry.banner_thumb || '',
+    body_urls: [], // body images aren't stored locally — only banner thumb
+    submitted_by: entry.submitted_by || '',
+    submitted_date: entry.submitted_date || '',
+    status: 'Processing', // synthetic — not a real sheet status
+    admin_note: '',
+    _pendingExtras: {
+      bodyCount: entry.body_count || 0,
+      submittedAtIso: entry.submitted_at_iso,
+    },
+  };
+  state.screen = 'review';
+  render();
+}
+
 async function openMyStory(destination, rowNumber) {
   state.review = freshReviewState();
   state.review.destination = destination;
@@ -1738,15 +1982,23 @@ function renderReview() {
   }
 
   const d = r.data;
-  const isSelf = r.mode === 'self';
+  // 'pending' mode is for local-only entries (just submitted, runner
+  // hasn't cycled yet). Treated like 'self' for UI purposes — no
+  // approve/reject footer, no edit controls — but with its own status
+  // banner ("Processing") and no API-backed body image carousel.
+  const isSelf = r.mode === 'self' || r.mode === 'pending';
   const images = reviewImages(d);
   const idx = Math.max(0, Math.min(r.imageIndex, images.length - 1));
   const datePill = formatDatePill(d.submitted_date);
 
   // Self-view banner: only shown when the submitter is looking at their
   // own story AND the status is not Approved. Approved stories appear
-  // exactly as they do on the Hub — no callout needed.
-  const selfBannerHtml = isSelf ? renderSelfBanner(d.status, d.admin_note) : '';
+  // exactly as they do on the Hub — no callout needed. Pending mode
+  // passes _pendingExtras through so the banner can mention body
+  // photo count.
+  const selfBannerHtml = isSelf
+    ? renderSelfBanner(d.status, d.admin_note, d._pendingExtras)
+    : '';
 
   const carouselHtml = images.length
     ? `
@@ -1769,6 +2021,9 @@ function renderReview() {
       </div>`
     : '';
 
+  // In pending mode, surface the placeholder when the submitter left
+  // the highlight blank — same convention as the Preview screen, so the
+  // submitter knows the runner will fill it in.
   const highlightsHtml = d.highlight
     ? `
       <aside class="review-highlights">
@@ -1777,7 +2032,15 @@ function renderReview() {
           <li>${escapeHtml(d.highlight)}</li>
         </ul>
       </aside>`
-    : '';
+    : (r.mode === 'pending'
+      ? `
+      <aside class="review-highlights review-highlights--placeholder">
+        <h3 class="review-highlights__heading">Key Highlights:</h3>
+        <ul class="review-highlights__list">
+          <li><em>(Highlight will be generated)</em></li>
+        </ul>
+      </aside>`
+      : '');
 
   // Body content swaps when editing — form replaces the read-only preview
   // for title/highlight/text. Carousel + meta card stay (admin can see
@@ -1876,12 +2139,18 @@ function renderReview() {
           </button>
         </div>`;
 
+  // For pending mode, blank title means "submitter left it for the
+  // runner to generate" — same convention as the Preview screen.
+  const titleDisplay = d.title
+    ? d.title
+    : (r.mode === 'pending' ? '(Title will be generated)' : '(no title)');
+
   root.innerHTML = `
     ${toastHtml()}
     <button class="topbar__back review-mobile-back" type="button" id="back-btn">← Back</button>
     <article class="review-modal">
       <header class="review-header">
-        <h2 class="review-header__title">${escapeHtml(d.title || '(no title)')}</h2>
+        <h2 class="review-header__title">${escapeHtml(titleDisplay)}</h2>
         ${datePill ? `<span class="review-header__date">${escapeHtml(datePill)}</span>` : ''}
         <button type="button" class="review-header__close" id="close-btn" aria-label="Close">✕</button>
       </header>
@@ -1958,10 +2227,11 @@ function moveCarousel(delta) {
 
 function closeReview() {
   // Branch on the mode the review screen was opened in:
-  //   'self'  → submitter came from My Stories; return them there
-  //   'admin' → admin came from the review queue (or notify deep link);
-  //             return them to the queue and refresh it if stale
-  const wasSelf = state.review.mode === 'self';
+  //   'self'   → submitter came from My Stories; return them there
+  //   'pending'→ same — pending detail is also part of My Stories
+  //   'admin'  → admin came from the review queue (or notify deep link);
+  //              return them to the queue and refresh it if stale
+  const wasSelf = state.review.mode === 'self' || state.review.mode === 'pending';
   state.review = freshReviewState();
   if (wasSelf) {
     state.screen = 'recent';
